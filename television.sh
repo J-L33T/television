@@ -325,7 +325,7 @@ show_stats() {
 # ──────────────────────────────────────────────────────────────
 COLS=66
 
-_rep() { local s=""; local i=0; while (( i < $2 )); do s+="$1"; (( i++ )); done; printf '%s' "$s"; }
+_rep() { local s=""; local i=0; while [[ $i -lt $2 ]]; do s+="$1"; i=$(( i + 1 )); done; printf '%s' "$s"; }
 
 box_top()  { echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"; }
 box_bot()  { echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"; }
