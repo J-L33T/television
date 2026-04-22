@@ -3,22 +3,22 @@
 # │          TELEVISION — Telegram MTProxy Manager          │
 # │    Powered by telemt (Rust/tokio) · J-L33T/television   │
 # └─────────────────────────────────────────────────────────┘
-# Version: 0.1.2  |  License: MIT
+# Version: 0.2.0  |  License: MIT
 
 set -eo pipefail
 [[ "${EUID}" -ne 0 ]] && { echo "[ERROR] Run as root: sudo bash $0"; exit 1; }
 if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then echo "[ERROR] Bash 4.0+ required."; exit 1; fi
 
-readonly VERSION="0.1.2"
+readonly VERSION="0.2.0"
 readonly INSTALL_DIR="/opt/television"
 readonly SETTINGS_FILE="${INSTALL_DIR}/settings.conf"
 readonly SECRETS_FILE="${INSTALL_DIR}/secrets.conf"
 readonly COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
-# Config mounts to /etc/telemt/config.toml inside container (official telemt path)
 readonly CONFIG_FILE="${INSTALL_DIR}/config.toml"
 readonly LINKS_FILE="${INSTALL_DIR}/proxy_links.txt"
-readonly TELEMT_API="https://api.github.com/repos/telemt/telemt/releases/latest"
+readonly SELF_BIN="/usr/local/bin/television"
 readonly DOCKER_IMAGE="ghcr.io/telemt/telemt:latest"
+readonly METRICS_LOCAL_PORT="9091"   # всегда 127.0.0.1:9091 внутри контейнера
 
 RED="\033[0;31m";    LRED="\033[1;31m"
 GREEN="\033[0;32m";  LGREEN="\033[1;32m"
@@ -33,7 +33,10 @@ log_warn() { echo -e " ${YELLOW}${SYM_WARN}${NC}  $*"; }
 log_info() { echo -e " ${CYAN}${SYM_ARROW}${NC}  $*"; }
 log_dim()  { echo -e " ${DIM}$*${NC}"; }
 
-PROXY_PORT="443"; PROXY_DOMAIN="cloudflare.com"; PROXY_PROTOCOL="tls"; CUSTOM_IP=""; METRICS_PORT="9090"
+# ──────────────────────────────────────────────────────────────
+# SETTINGS
+# ──────────────────────────────────────────────────────────────
+PROXY_PORT="443"; PROXY_DOMAIN="cloudflare.com"; PROXY_PROTOCOL="tls"; CUSTOM_IP=""; METRICS_PORT="9091"
 
 load_settings() {
   [[ -f "${SETTINGS_FILE}" ]] || return 0
@@ -49,88 +52,74 @@ load_settings() {
     esac
   done < "${SETTINGS_FILE}"
 }
+
 save_settings() {
   mkdir -p "${INSTALL_DIR}"
   printf "PROXY_PORT=%s\nPROXY_DOMAIN=%s\nPROXY_PROTOCOL=%s\nCUSTOM_IP=%s\nMETRICS_PORT=%s\n" \
     "${PROXY_PORT}" "${PROXY_DOMAIN}" "${PROXY_PROTOCOL}" "${CUSTOM_IP}" "${METRICS_PORT}" > "${SETTINGS_FILE}"
 }
+
+# ──────────────────────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────────────────────
 get_ip() {
   [[ -n "${CUSTOM_IP}" ]] && { echo "${CUSTOM_IP}"; return; }
-  curl -s --max-time 5 https://api.ipify.org 2>/dev/null || curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "?.?.?.?"
+  curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+  curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "?.?.?.?"
 }
+
 gen_secret() { openssl rand -hex 16; }
+
 secret_to_tls() {
   local secret="$1" domain="$2" dh
   dh=$(echo -n "${domain}" | xxd -p | tr -d '\n')
   echo "ee${secret}${dh}"
 }
+
 proxy_link() {
   local secret="$1" domain="${2:-$PROXY_DOMAIN}" ip ts
   ip=$(get_ip); ts=$(secret_to_tls "${secret}" "${domain}")
   echo "tg://proxy?server=${ip}&port=${PROXY_PORT}&secret=${ts}"
 }
+
 is_running() {
   [[ -f "${COMPOSE_FILE}" ]] && \
   docker compose -f "${COMPOSE_FILE}" ps 2>/dev/null | grep -qE "running|Up" 2>/dev/null
 }
-get_latest_release() {
-  curl -s --max-time 10 "${TELEMT_API}" 2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4
-}COLS=62
-draw_line() { printf "%${2:-$COLS}s\n" | tr ' ' "${1:--}"; }
-draw_header() {
-  local t="$1" tl pad
-  tl=${#t}; pad=$(( (COLS - tl - 2) / 2 ))
-  clear; echo
-  echo -e "${CYAN}$(draw_line '=')${NC}"
-  printf "${CYAN}|${NC}${BOLD}${WHITE}%${pad}s${NC}${BOLD}%s${NC}${WHITE}%${pad}s${CYAN}|${NC}\n" "" "${t}" ""
-  echo -e "${CYAN}$(draw_line '=')${NC}"
-  echo
-}
-draw_section() { echo -e " ${BOLD}$*${NC}"; echo -e " ${DIM}$(draw_line '-' 58)${NC}"; }
-draw_row()    { printf "  ${DIM}%-20s${NC}  %b\n" "$1" "$2"; }
-press_enter() { echo; echo -e " ${DIM}Press [Enter]...${NC}"; read -r; }
-read_choice() { echo; printf " ${BOLD}${CYAN}[?]${NC} ${1:-Option}: "; read -r CHOICE; }
-show_status() {
-  local ip rs is uc=0
-  ip=$(get_ip)
-  is_running && rs="${LGREEN}${SYM_ON} Active${NC}" || rs="${LRED}${SYM_OFF} Stopped${NC}"
-  [[ -f "${INSTALL_DIR}/.installed" ]] && is="${LGREEN}${SYM_ON} Installed${NC}" || is="${YELLOW}${SYM_OFF} Not installed${NC}"
-  [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -vc '^$' "${SECRETS_FILE}" 2>/dev/null || echo 0)
-  draw_header "\U0001f4e1  TELEVISION  v${VERSION}"
-  draw_section "STATUS"
-  draw_row "Installation" "${is}"
-  draw_row "Proxy" "${rs}"
-  draw_row "IP" "${ip}"
-  draw_row "Port" "${PROXY_PORT}"
-  draw_row "Domain (FakeTLS)" "${PROXY_DOMAIN}"
-  draw_row "Protocol" "${PROXY_PROTOCOL}"
-  draw_row "Users" "${uc}"
-  echo
+
+# Проверка — занят ли порт другим процессом
+port_in_use() {
+  local port="$1"
+  ss -tlnp 2>/dev/null | grep -q ":${port} " || \
+  netstat -tlnp 2>/dev/null | grep -q ":${port} " || \
+  lsof -iTCP:"${port}" -sTCP:LISTEN -t &>/dev/null
 }
 
-# FIXED: official docker-compose format from github.com/telemt/telemt
-# Key fixes:
-#  - config mounts to /etc/telemt/config.toml (not /app/)
-#  - working_dir: /etc/telemt (needed for tlsfront/ TLS cache)
-#  - tmpfs: /etc/telemt:rw (container is read_only, telemt writes cache here)
-#  - ports: instead of network_mode: host (safer, bridge mode)
-#  - cap_drop: ALL + security_opt: no-new-privileges
+# ──────────────────────────────────────────────────────────────
+# DOCKER COMPOSE  (FIX: tmpfs НЕ перекрывает volume с конфигом)
+# ──────────────────────────────────────────────────────────────
+# Правильная схема:
+#   - config.toml монтируется в /etc/telemt/config.toml:ro
+#   - tmpfs вешается на /tmp (для tlsfront-кэша TLS)
+#   - working_dir: /tmp  (telemt пишет tlsfront/ туда)
+#   - НЕ вешаем tmpfs на /etc/telemt — иначе volume пропадает
+# ──────────────────────────────────────────────────────────────
 write_compose() {
   mkdir -p "${INSTALL_DIR}"
-  cat > "${COMPOSE_FILE}" <<'CEOF'
+  cat > "${COMPOSE_FILE}" <<CEOF
 services:
   telemt:
-    image: ghcr.io/telemt/telemt:latest
+    image: ${DOCKER_IMAGE}
     container_name: telemt
     restart: unless-stopped
     ports:
-      - "PORT_PLACEHOLDER:PORT_PLACEHOLDER"
-      - "127.0.0.1:9091:9091"
-    working_dir: /etc/telemt
+      - "${PROXY_PORT}:${PROXY_PORT}"
+      - "127.0.0.1:${METRICS_PORT}:9091"
+    working_dir: /tmp
     volumes:
-      - CONFIG_PLACEHOLDER:/etc/telemt/config.toml:ro
+      - ${CONFIG_FILE}:/etc/telemt/config.toml:ro
     tmpfs:
-      - /etc/telemt:rw,mode=1777,size=4m
+      - /tmp:rw,mode=1777,size=8m
     environment:
       - RUST_LOG=info
     healthcheck:
@@ -151,18 +140,12 @@ services:
         soft: 65536
         hard: 262144
 CEOF
-  # Replace placeholders with actual values
-  sed -i "s|PORT_PLACEHOLDER|${PROXY_PORT}|g" "${COMPOSE_FILE}"
-  sed -i "s|CONFIG_PLACEHOLDER|${CONFIG_FILE}|g" "${COMPOSE_FILE}"
-  log_ok "docker-compose.yml written"
+  log_ok "docker-compose.yml written (port ${PROXY_PORT}, metrics 127.0.0.1:${METRICS_PORT})"
 }
 
-# FIXED: official telemt.toml format
-# - log_level added
-# - [general.links] section added
-# - [[server.listeners]] added
-# - tls_front_dir added to [censorship]
-# - [access.users]: label = "32_hex_secret" (NO ee prefix in config!)
+# ──────────────────────────────────────────────────────────────
+# CONFIG TOML
+# ──────────────────────────────────────────────────────────────
 write_config() {
   mkdir -p "${INSTALL_DIR}"
   local ub="" tv="false" sv="false" cv="false"
@@ -174,7 +157,9 @@ write_config() {
     done < "${SECRETS_FILE}"
   fi
   case "${PROXY_PROTOCOL}" in
-    tls)     tv="true" ;; secure) sv="true" ;; classic) cv="true" ;;
+    tls)     tv="true" ;;
+    secure)  sv="true" ;;
+    classic) cv="true" ;;
     all)     tv="true"; sv="true"; cv="true" ;;
   esac
   {
@@ -197,6 +182,10 @@ write_config() {
     echo "[[server.listeners]]"
     echo "ip = \"0.0.0.0\""
     echo ""
+    echo "[metrics]"
+    echo "port = 9091"
+    echo "whitelist = [\"127.0.0.1\"]"
+    echo ""
     echo "[censorship]"
     echo "tls_domain = \"${PROXY_DOMAIN}\""
     echo "mask = true"
@@ -211,37 +200,170 @@ write_config() {
     fi
   } > "${CONFIG_FILE}"
   log_ok "config.toml written"
-}do_start() {
+}
+
+# ──────────────────────────────────────────────────────────────
+# PROXY CONTROL
+# ──────────────────────────────────────────────────────────────
+do_start() {
   command -v docker &>/dev/null || { log_err "Docker not installed."; return 1; }
-  write_config; write_compose
+  write_config
+  write_compose
   docker compose -f "${COMPOSE_FILE}" up -d --pull always 2>&1 | tail -5
   sleep 3
-  if is_running; then log_ok "Proxy started"
+  if is_running; then log_ok "Proxy started on port ${PROXY_PORT}"
   else log_err "Failed — check logs (option 6)"; docker compose -f "${COMPOSE_FILE}" logs --tail=30; fi
 }
+
 do_stop() {
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; return; }
   docker compose -f "${COMPOSE_FILE}" down && log_ok "Proxy stopped"
 }
+
 do_restart() {
   write_config
-  [[ -f "${COMPOSE_FILE}" ]] && docker compose -f "${COMPOSE_FILE}" down 2>/dev/null || true
   write_compose
-  docker compose -f "${COMPOSE_FILE}" up -d 2>&1 | tail -3; sleep 2
+  [[ -f "${COMPOSE_FILE}" ]] && docker compose -f "${COMPOSE_FILE}" down 2>/dev/null || true
+  docker compose -f "${COMPOSE_FILE}" up -d 2>&1 | tail -3
+  sleep 2
+  is_running && log_ok "Proxy restarted" || log_err "Restart failed"
 }
+
 do_update() {
   draw_header "UPDATE TELEMT"
-  local latest; latest=$(get_latest_release)
-  [[ -z "${latest}" ]] && latest="unknown"
-  log_info "Latest release: ${latest}"; log_info "Pulling new image..."
+  log_info "Pulling latest image..."
   docker pull "${DOCKER_IMAGE}" 2>&1 | tail -5
   log_ok "Image updated"
   if is_running; then
     log_info "Restarting with new image..."
-    do_restart && log_ok "Restarted"
+    do_restart
   fi
   press_enter
 }
+
+# ──────────────────────────────────────────────────────────────
+# METRICS / STATISTICS
+# ──────────────────────────────────────────────────────────────
+fetch_metrics() {
+  curl -s --max-time 3 "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || echo ""
+}
+
+# Возвращает значение конкретной метрики по имени и label
+get_metric_value() {
+  local metrics="$1" name="$2" label_key="$3" label_val="$4"
+  if [[ -n "${label_key}" ]]; then
+    echo "${metrics}" | grep "^${name}{" | grep "${label_key}=\"${label_val}\"" | \
+      awk '{print $NF}' | head -1
+  else
+    echo "${metrics}" | grep "^${name} " | awk '{print $NF}' | head -1
+  fi
+}
+
+format_bytes() {
+  local bytes="${1:-0}"
+  bytes="${bytes%%.*}"  # обрезаем дробь если есть
+  [[ -z "${bytes}" || "${bytes}" == "0" ]] && { echo "0 B"; return; }
+  if   (( bytes >= 1073741824 )); then printf "%.1f GB" "$(echo "scale=1; ${bytes}/1073741824" | bc)"
+  elif (( bytes >= 1048576 ))   ; then printf "%.1f MB" "$(echo "scale=1; ${bytes}/1048576" | bc)"
+  elif (( bytes >= 1024 ))      ; then printf "%.1f KB" "$(echo "scale=1; ${bytes}/1024" | bc)"
+  else echo "${bytes} B"
+  fi
+}
+
+show_stats() {
+  draw_header "USER STATISTICS"
+  echo
+  if ! is_running; then
+    log_warn "Proxy is not running — no stats available."
+    press_enter; return
+  fi
+  local metrics; metrics=$(fetch_metrics)
+  if [[ -z "${metrics}" ]]; then
+    log_warn "Metrics endpoint not reachable (127.0.0.1:${METRICS_PORT})"
+    log_dim "Make sure METRICS_PORT=${METRICS_PORT} in settings and proxy is running."
+    press_enter; return
+  fi
+
+  # Общий трафик
+  local total_in total_out conns
+  total_in=$(get_metric_value "${metrics}" "telemt_bytes_received_total" "" "")
+  total_out=$(get_metric_value "${metrics}" "telemt_bytes_sent_total" "" "")
+  conns=$(get_metric_value "${metrics}" "telemt_connections_active" "" "")
+
+  printf "  %-22s %s\n" "Active connections:" "${conns:-?}"
+  printf "  %-22s %s\n" "Total received:" "$(format_bytes "${total_in:-0}")"
+  printf "  %-22s %s\n" "Total sent:" "$(format_bytes "${total_out:-0}")"
+  echo
+
+  # Per-user stats
+  if [[ -f "${SECRETS_FILE}" ]] && [[ -s "${SECRETS_FILE}" ]]; then
+    printf "  ${BOLD}%-20s  %-6s  %-12s  %-12s  %s${NC}\n" "User" "State" "Received" "Sent" "Connections"
+    echo -e "  ${DIM}$(printf '%0.s─' {1..65})${NC}"
+    while IFS="|" read -r label secret enabled; do
+      [[ "${label}" =~ ^# ]] || [[ -z "${label}" ]] && continue
+      local u_in u_out u_conn
+      u_in=$(get_metric_value  "${metrics}" "telemt_user_bytes_received_total" "user" "${label}")
+      u_out=$(get_metric_value "${metrics}" "telemt_user_bytes_sent_total"     "user" "${label}")
+      u_conn=$(get_metric_value "${metrics}" "telemt_user_connections_active"  "user" "${label}")
+      local state_sym
+      [[ "${enabled}" == "enabled" ]] && state_sym="${LGREEN}on${NC}" || state_sym="${LRED}off${NC}"
+      printf "  %-20s  %-6b  %-12s  %-12s  %s\n" \
+        "${label}" "${state_sym}" \
+        "$(format_bytes "${u_in:-0}")" \
+        "$(format_bytes "${u_out:-0}")" \
+        "${u_conn:-0}"
+    done < "${SECRETS_FILE}"
+  else
+    log_warn "No users configured."
+  fi
+  echo
+  press_enter
+}
+
+# ──────────────────────────────────────────────────────────────
+# TUI DRAWING
+# ──────────────────────────────────────────────────────────────
+COLS=64
+
+draw_line() { printf "%${2:-$COLS}s\n" | tr ' ' "${1:--}"; }
+
+draw_header() {
+  local t="$1" tl pad
+  tl=${#t}; pad=$(( (COLS - tl - 2) / 2 ))
+  clear; echo
+  echo -e "${CYAN}$(draw_line '=')${NC}"
+  printf "${CYAN}|${NC}${BOLD}${WHITE}%${pad}s${NC}${BOLD}%s${NC}${WHITE}%${pad}s${CYAN}|${NC}\n" "" "${t}" ""
+  echo -e "${CYAN}$(draw_line '=')${NC}"
+  echo
+}
+
+draw_section() { echo -e " ${BOLD}$*${NC}"; echo -e " ${DIM}$(draw_line '-' 60)${NC}"; }
+draw_row()     { printf "  ${DIM}%-22s${NC}  %b\n" "$1" "$2"; }
+press_enter()  { echo; echo -e " ${DIM}Press [Enter]...${NC}"; read -r; }
+read_choice()  { echo; printf " ${BOLD}${CYAN}[?]${NC} ${1:-Option}: "; read -r CHOICE; }
+
+show_status() {
+  local ip rs is uc=0
+  ip=$(get_ip)
+  is_running && rs="${LGREEN}${SYM_ON} Active${NC}" || rs="${LRED}${SYM_OFF} Stopped${NC}"
+  [[ -f "${INSTALL_DIR}/.installed" ]] && is="${LGREEN}${SYM_ON} Installed${NC}" || is="${YELLOW}${SYM_OFF} Not installed${NC}"
+  [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -vc '^$' "${SECRETS_FILE}" 2>/dev/null || echo 0)
+  draw_header "\U0001f4e1  TELEVISION  v${VERSION}"
+  draw_section "STATUS"
+  draw_row "Installation"     "${is}"
+  draw_row "Proxy"            "${rs}"
+  draw_row "IP"               "${ip}"
+  draw_row "Port"             "${PROXY_PORT}"
+  draw_row "Domain (FakeTLS)" "${PROXY_DOMAIN}"
+  draw_row "Protocol"         "${PROXY_PROTOCOL}"
+  draw_row "Metrics"          "127.0.0.1:${METRICS_PORT}"
+  draw_row "Users"            "${uc}"
+  echo
+}
+
+# ──────────────────────────────────────────────────────────────
+# INSTALL DEPS
+# ──────────────────────────────────────────────────────────────
 install_deps() {
   log_info "Checking dependencies..."
   local pkgs=()
@@ -249,6 +371,8 @@ install_deps() {
   command -v curl    &>/dev/null || pkgs+=(curl)
   command -v xxd     &>/dev/null || pkgs+=(xxd)
   command -v openssl &>/dev/null || pkgs+=(openssl)
+  command -v bc      &>/dev/null || pkgs+=(bc)
+  command -v ss      &>/dev/null || pkgs+=(iproute2)
   if [[ ${#pkgs[@]} -gt 0 ]]; then
     log_info "Installing: ${pkgs[*]}"
     if command -v apt-get &>/dev/null; then
@@ -259,39 +383,93 @@ install_deps() {
   if ! docker compose version &>/dev/null; then
     log_info "Installing Docker Compose plugin..."
     mkdir -p /usr/local/lib/docker/cli-plugins
-    curl -fsSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
       -o /usr/local/lib/docker/cli-plugins/docker-compose
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
   fi
   systemctl enable --now docker 2>/dev/null || true
   log_ok "Dependencies ready"
 }
+
+# ──────────────────────────────────────────────────────────────
+# SELF-INSTALL (алиас в /usr/local/bin/television)
+# ──────────────────────────────────────────────────────────────
+do_self_install() {
+  local src
+  src="$(realpath "$0")"
+  if [[ "${src}" == "${SELF_BIN}" ]]; then
+    log_ok "Already installed as '${SELF_BIN}' — just type 'television'"
+    return
+  fi
+  cp "${src}" "${SELF_BIN}"
+  chmod +x "${SELF_BIN}"
+  log_ok "Installed to ${SELF_BIN}"
+  log_ok "You can now run: ${BOLD}television${NC}"
+}
+
+# ──────────────────────────────────────────────────────────────
+# INSTALL WIZARD
+# ──────────────────────────────────────────────────────────────
 do_install() {
   draw_header "INSTALL TELEVISION"
   install_deps
+
   echo; draw_section "CONFIGURATION"; echo
-  printf "  Port [%s]: " "${PROXY_PORT}"; read -r i; [[ -n "${i}" ]] && PROXY_PORT="${i}"
+
+  # Порт — с проверкой на занятость
+  while true; do
+    printf "  Proxy port [%s]: " "${PROXY_PORT}"; read -r i
+    [[ -n "${i}" ]] && PROXY_PORT="${i}"
+    if port_in_use "${PROXY_PORT}"; then
+      log_warn "Port ${PROXY_PORT} is already in use by another process!"
+      log_dim  "  (hint: 3x-ui usually takes 443, try 4443 or 8443)"
+      printf "  Try a different port? [y/N]: "; read -r yn
+      [[ "${yn,,}" == "y" ]] && continue
+    fi
+    break
+  done
+
   printf "  FakeTLS domain [%s]: " "${PROXY_DOMAIN}"; read -r i; [[ -n "${i}" ]] && PROXY_DOMAIN="${i}"
+
   echo "  Protocol: 1) tls (FakeTLS)  2) secure  3) classic  4) all"
   printf "  Choice [1]: "; read -r i
   case "${i}" in 2) PROXY_PROTOCOL="secure" ;; 3) PROXY_PROTOCOL="classic" ;; 4) PROXY_PROTOCOL="all" ;; *) PROXY_PROTOCOL="tls" ;; esac
+
   printf "  Custom IP (blank=auto-detect): "; read -r i; [[ -n "${i}" ]] && CUSTOM_IP="${i}"
+
+  # Порт метрик (не должен пересекаться)
+  printf "  Metrics port [%s]: " "${METRICS_PORT}"; read -r i; [[ -n "${i}" ]] && METRICS_PORT="${i}"
+
   echo; draw_section "FIRST USER"
   printf "  Username [default]: "; read -r fl; [[ -z "${fl}" ]] && fl="default"
   local fs; fs=$(gen_secret)
   echo "${fl}|${fs}|enabled" > "${SECRETS_FILE}"
-  save_settings; write_config; write_compose
+
+  save_settings
+  write_config
+  write_compose
+
   log_info "Pulling Docker image (may take a minute)..."
   docker pull "${DOCKER_IMAGE}" 2>&1 | tail -3
   docker compose -f "${COMPOSE_FILE}" up -d 2>&1 | tail -5
-  sleep 3; touch "${INSTALL_DIR}/.installed"
+  sleep 3
+  touch "${INSTALL_DIR}/.installed"
+
+  # Self-install в /usr/local/bin
+  do_self_install
+
   echo; draw_section "YOUR PROXY LINK"; echo
   local link; link=$(proxy_link "${fs}" "${PROXY_DOMAIN}")
   echo -e "  ${BOLD}${WHITE}User: ${fl}${NC}"
   echo -e "  ${LGREEN}${link}${NC}"
   echo "${fl}: ${link}" > "${LINKS_FILE}"
   echo; log_ok "Installation complete!"; press_enter
-}list_users_inline() {
+}
+
+# ──────────────────────────────────────────────────────────────
+# USER MANAGEMENT
+# ──────────────────────────────────────────────────────────────
+list_users_inline() {
   [[ -f "${SECRETS_FILE}" ]] && [[ -s "${SECRETS_FILE}" ]] || { log_warn "No users configured."; return 1; }
   echo; local n=0
   while IFS="|" read -r label secret enabled; do
@@ -302,6 +480,7 @@ do_install() {
   done < "${SECRETS_FILE}"
   echo; return 0
 }
+
 add_user() {
   draw_header "\U0001f464  ADD USER"
   printf "  Username: "; read -r label
@@ -311,11 +490,12 @@ add_user() {
   echo "${label}|${secret}|enabled" >> "${SECRETS_FILE}"
   write_config; do_restart
   local link; link=$(proxy_link "${secret}" "${PROXY_DOMAIN}")
-  log_ok "User '${label}' added!"
+  echo; log_ok "User '${label}' added!"
   echo -e "  ${LGREEN}${link}${NC}"
   echo "${label}: ${link}" >> "${LINKS_FILE}"
   press_enter
 }
+
 remove_user() {
   draw_header "\U0001f5d1  REMOVE USER"
   echo; list_users_inline || { sleep 2; return; }
@@ -323,8 +503,10 @@ remove_user() {
   grep -q "^${label}|" "${SECRETS_FILE}" 2>/dev/null || { log_warn "User not found."; press_enter; return; }
   sed -i "/^${label}|/d" "${SECRETS_FILE}"
   sed -i "/^${label}: /d" "${LINKS_FILE}" 2>/dev/null || true
-  write_config; do_restart; log_ok "User '${label}' removed."; press_enter
+  write_config; do_restart
+  log_ok "User '${label}' removed."; press_enter
 }
+
 toggle_user() {
   draw_header "TOGGLE USER"
   echo; list_users_inline || { sleep 2; return; }
@@ -332,13 +514,14 @@ toggle_user() {
   grep -q "^${label}|" "${SECRETS_FILE}" 2>/dev/null || { log_warn "User not found."; press_enter; return; }
   if grep -q "^${label}|.*|enabled$" "${SECRETS_FILE}"; then
     sed -i "s/^${label}|\(.*\)|enabled$/${label}|\1|disabled/" "${SECRETS_FILE}"
-    log_ok "Disabled."
+    log_ok "User '${label}' disabled."
   else
     sed -i "s/^${label}|\(.*\)|disabled$/${label}|\1|enabled/" "${SECRETS_FILE}"
-    log_ok "Enabled."
+    log_ok "User '${label}' enabled."
   fi
   write_config; do_restart; press_enter
 }
+
 show_links() {
   draw_header "\U0001f517  PROXY LINKS"; echo
   [[ -f "${SECRETS_FILE}" ]] && [[ -s "${SECRETS_FILE}" ]] || { log_warn "No users configured."; press_enter; return; }
@@ -353,6 +536,7 @@ show_links() {
   done < "${SECRETS_FILE}"
   log_dim "Saved to ${LINKS_FILE}"; press_enter
 }
+
 user_menu() {
   while true; do
     show_status; draw_section "USER MANAGEMENT"; echo
@@ -360,31 +544,58 @@ user_menu() {
     echo -e "  ${BOLD}1)${NC} Add user"
     echo -e "  ${BOLD}2)${NC} Remove user"
     echo -e "  ${BOLD}3)${NC} Toggle (enable/disable)"
-    echo -e "  ${BOLD}4)${NC} Show links"
+    echo -e "  ${BOLD}4)${NC} Show proxy links"
+    echo -e "  ${BOLD}5)${NC} User statistics"
     echo -e "  ${BOLD}0)${NC} Back"
     read_choice "Option"
-    case "${CHOICE}" in 1) add_user ;; 2) remove_user ;; 3) toggle_user ;; 4) show_links ;; 0) return ;; esac
+    case "${CHOICE}" in
+      1) add_user ;; 2) remove_user ;; 3) toggle_user ;;
+      4) show_links ;; 5) show_stats ;; 0) return ;;
+    esac
   done
-}show_logs() {
+}
+
+# ──────────────────────────────────────────────────────────────
+# LOGS & RECONFIGURE & UNINSTALL
+# ──────────────────────────────────────────────────────────────
+show_logs() {
   draw_header "LOGS"
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; press_enter; return; }
   docker compose -f "${COMPOSE_FILE}" logs --tail=60 --no-color 2>&1 | head -70
   press_enter
 }
+
 do_reconfigure() {
   draw_header "RECONFIGURE"; echo
   log_info "Change settings (Enter = keep current):"; echo
-  printf "  Port [%s]: " "${PROXY_PORT}"; read -r i; [[ -n "${i}" ]] && PROXY_PORT="${i}"
+
+  # Порт с проверкой
+  while true; do
+    printf "  Port [%s]: " "${PROXY_PORT}"; read -r i
+    local new_port="${PROXY_PORT}"
+    [[ -n "${i}" ]] && new_port="${i}"
+    if [[ "${new_port}" != "${PROXY_PORT}" ]] && port_in_use "${new_port}"; then
+      log_warn "Port ${new_port} is already in use!"
+      printf "  Use it anyway? [y/N]: "; read -r yn
+      [[ "${yn,,}" == "y" ]] && { PROXY_PORT="${new_port}"; break; }
+      continue
+    fi
+    PROXY_PORT="${new_port}"; break
+  done
+
   printf "  FakeTLS domain [%s]: " "${PROXY_DOMAIN}"; read -r i; [[ -n "${i}" ]] && PROXY_DOMAIN="${i}"
   echo "  Protocol: 1) tls  2) secure  3) classic  4) all  [current: ${PROXY_PROTOCOL}]"
   printf "  Choice (Enter=keep): "; read -r i
   case "${i}" in 1) PROXY_PROTOCOL="tls" ;; 2) PROXY_PROTOCOL="secure" ;; 3) PROXY_PROTOCOL="classic" ;; 4) PROXY_PROTOCOL="all" ;; esac
   printf "  Custom IP [%s] (-=clear): " "${CUSTOM_IP:-auto}"; read -r i
   [[ "${i}" == "-" ]] && CUSTOM_IP="" || [[ -n "${i}" ]] && CUSTOM_IP="${i}"
+  printf "  Metrics port [%s]: " "${METRICS_PORT}"; read -r i; [[ -n "${i}" ]] && METRICS_PORT="${i}"
+
   save_settings; write_config; write_compose
   is_running && { log_info "Restarting..."; do_restart; }
   log_ok "Reconfigured!"; press_enter
 }
+
 do_uninstall() {
   draw_header "UNINSTALL"; echo
   log_warn "This will STOP and REMOVE all proxy data and configuration."
@@ -392,8 +603,15 @@ do_uninstall() {
   [[ "${confirm}" != "yes" ]] && { log_info "Cancelled."; press_enter; return; }
   [[ -f "${COMPOSE_FILE}" ]] && docker compose -f "${COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
   docker rmi "${DOCKER_IMAGE}" 2>/dev/null || true
-  rm -rf "${INSTALL_DIR}"; log_ok "Television uninstalled."; press_enter; exit 0
+  rm -rf "${INSTALL_DIR}"
+  # Убираем бинарь только если он указывает на этот скрипт
+  [[ -f "${SELF_BIN}" ]] && rm -f "${SELF_BIN}" && log_ok "Removed ${SELF_BIN}"
+  log_ok "Television uninstalled."; press_enter; exit 0
 }
+
+# ──────────────────────────────────────────────────────────────
+# MAIN MENU
+# ──────────────────────────────────────────────────────────────
 main_menu() {
   load_settings
   while true; do
@@ -406,17 +624,26 @@ main_menu() {
       echo -e "  ${BOLD}5)${NC} Update telemt"
       echo -e "  ${BOLD}6)${NC} View logs"
       echo -e "  ${BOLD}7)${NC} Reconfigure"
-      echo; echo -e "  ${BOLD}0)${NC} Full uninstall"
+      echo -e "  ${BOLD}8)${NC} Statistics"
+      echo
+      echo -e "  ${BOLD}0)${NC} Full uninstall"
     else
       echo -e "  ${BOLD}1)${NC} Install television"
-      echo; echo -e "  ${BOLD}0)${NC} Exit"
+      echo
+      echo -e "  ${BOLD}0)${NC} Exit"
     fi
     read_choice "Option"
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
       case "${CHOICE}" in
-        1) do_stop; press_enter ;; 2) do_restart; press_enter ;;
-        3) user_menu ;; 4) show_links ;; 5) do_update ;;
-        6) show_logs ;; 7) do_reconfigure ;; 0) do_uninstall ;;
+        1) do_stop; press_enter ;;
+        2) do_restart; press_enter ;;
+        3) user_menu ;;
+        4) show_links ;;
+        5) do_update ;;
+        6) show_logs ;;
+        7) do_reconfigure ;;
+        8) show_stats ;;
+        0) do_uninstall ;;
         *) log_warn "Invalid option" ;;
       esac
     else
@@ -426,6 +653,10 @@ main_menu() {
     fi
   done
 }
+
+# ──────────────────────────────────────────────────────────────
+# CLI MODE
+# ──────────────────────────────────────────────────────────────
 if [[ $# -gt 0 ]]; then
   load_settings
   case "$1" in
@@ -434,16 +665,26 @@ if [[ $# -gt 0 ]]; then
     stop)       do_stop ;;
     restart)    do_restart ;;
     update)     do_update ;;
-    status)     show_status; is_running && log_ok "Running" || log_warn "Stopped" ;;
+    status)
+      show_status
+      is_running && log_ok "Running" || log_warn "Stopped"
+      ;;
     logs)       show_logs ;;
+    stats)      show_stats ;;
+    self-install)
+      do_self_install
+      ;;
     add-user)
       [[ -z "$2" ]] && { echo "Usage: $0 add-user <name>"; exit 1; }
       secret=$(gen_secret)
       echo "$2|${secret}|enabled" >> "${SECRETS_FILE}"
       write_config; do_restart
-      echo "Added: $2"; proxy_link "${secret}"
+      log_ok "Added: $2"
+      proxy_link "${secret}"
       ;;
-    list-users) [[ -f "${SECRETS_FILE}" ]] && cut -d'|' -f1,3 "${SECRETS_FILE}" || echo "No users" ;;
+    list-users)
+      [[ -f "${SECRETS_FILE}" ]] && cut -d'|' -f1,3 "${SECRETS_FILE}" || echo "No users"
+      ;;
     links)
       [[ -f "${SECRETS_FILE}" ]] || exit 0
       while IFS="|" read -r label secret enabled; do
@@ -451,8 +692,12 @@ if [[ $# -gt 0 ]]; then
         echo "${label}: $(proxy_link "${secret}")"
       done < "${SECRETS_FILE}"
       ;;
-    *) echo "Usage: $0 {install|start|stop|restart|update|status|logs|add-user <n>|list-users|links}"; exit 1 ;;
+    *)
+      echo "Usage: $0 {install|start|stop|restart|update|status|logs|stats|self-install|add-user <n>|list-users|links}"
+      exit 1
+      ;;
   esac
   exit 0
 fi
+
 main_menu
