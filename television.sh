@@ -112,14 +112,14 @@ services:
     image: ${DOCKER_IMAGE}
     container_name: telemt
     restart: unless-stopped
+    command: ["/app/telemt", "/etc/telemt/config.toml"]
     ports:
       - "${PROXY_PORT}:${PROXY_PORT}"
       - "127.0.0.1:${METRICS_PORT}:9091"
-    working_dir: /tmp
     volumes:
       - ${CONFIG_FILE}:/etc/telemt/config.toml:ro
     tmpfs:
-      - /tmp:rw,mode=1777,size=8m
+      - /tmp:rw,mode=1777,size=16m
     environment:
       - RUST_LOG=info
     healthcheck:
@@ -178,9 +178,6 @@ write_config() {
     echo ""
     echo "[server]"
     echo "port = ${PROXY_PORT}"
-    echo ""
-    echo "[[server.listeners]]"
-    echo "ip = \"0.0.0.0\""
     echo ""
     echo "[metrics]"
     echo "port = 9091"
