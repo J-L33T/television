@@ -325,7 +325,7 @@ show_stats() {
 # ──────────────────────────────────────────────────────────────
 COLS=66
 
-_rep() { printf "%${2}s" | tr ' ' "${1}"; }
+_rep() { local s=""; local i=0; while (( i < $2 )); do s+="$1"; (( i++ )); done; printf '%s' "$s"; }
 
 box_top()  { echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"; }
 box_bot()  { echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"; }
@@ -389,22 +389,50 @@ show_status() {
     rs_text="○ STOPPED"; rs_color="${LRED}"
   fi
 
-  [[ -f "${INSTALL_DIR}/.installed" ]] && is_text="${LGREEN}Installed${NC}" || is_text="${YELLOW}Not installed${NC}"
-  [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -c '|' "${SECRETS_FILE}" 2>/dev/null || echo 0)
+  if [[ -f "${INSTALL_DIR}/.installed" ]]; then
+    is_text="${LGREEN}Installed${NC}"
+    [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -c '|' "${SECRETS_FILE}" 2>/dev/null || echo 0)
+  else
+    is_text="${YELLOW}Not installed${NC}"
+    uc=0
+  fi
 
   clear; echo
-  echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"
-  box_center "${BOLD}${WHITE}📡  TELEVISION${NC}  ${DIM}v${VERSION}${NC}"
-  box_center "${DIM}Telegram MTProxy · Rust/tokio · J-L33T${NC}"
-  box_sep
-  box_kv "Engine"   "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
-  box_kv "IP:Port"  "${WHITE}${ip}:${PROXY_PORT}${NC}"
-  box_kv "Domain"   "${PROXY_DOMAIN}"
-  [[ -n "${traffic_info}" ]] && \
-  box_kv "Traffic"  "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}"
-  box_kv "Secrets"  "${uc} active"
-  echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
+  local W=$((COLS-2))
+  printf "${CYAN}╔"; _rep '═' $W; printf "╗${NC}
+"
+  # Title line — plain text, centered manually
+  local title=" TELEVISION  v${VERSION}"
+  local sub="Telegram MTProxy - Rust/tokio - J-L33T"
+  local tpad=$(( (W - ${#title}) / 2 ))
+  local spad=$(( (W - ${#sub}) / 2 ))
+  printf "${CYAN}║${NC}"; _rep ' ' $tpad; printf "${BOLD}${WHITE}${title}${NC}"; _rep ' ' $(( W - tpad - ${#title} )); printf "${CYAN}║${NC}
+"
+  printf "${CYAN}║${NC}"; _rep ' ' $spad; printf "${DIM}${sub}${NC}"; _rep ' ' $(( W - spad - ${#sub} )); printf "${CYAN}║${NC}
+"
+  printf "${CYAN}╠"; _rep '═' $W; printf "╣${NC}
+"
+  # KV rows — fixed label width 10, value fills rest
+  _box_row "Engine"   "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
+  _box_row "IP:Port"  "${WHITE}${ip}:${PROXY_PORT}${NC}"
+  _box_row "Domain"   "${PROXY_DOMAIN}"
+  [[ -n "${traffic_info}" ]] && _box_row "Traffic" "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}"
+  _box_row "Secrets"  "${uc} active"
+  printf "${CYAN}╚"; _rep '═' $W; printf "╝${NC}
+"
   echo
+}
+
+# Вспомогательная функция для строки KV внутри рамки
+# Считает длину через stripped текст
+_box_row() {
+  local label="$1" val="$2"
+  local val_clean; val_clean=$(printf '%b' "${val}" | sed 's/\[[0-9;]*m//g')
+  local content="  ${label}   ${val_clean}"
+  local pad=$(( COLS - ${#content} - 2 ))
+  [[ ${pad} -lt 0 ]] && pad=0
+  printf "${CYAN}║${NC}  ${DIM}${label}${NC}   ${val}"; _rep ' ' $pad; printf "${CYAN}║${NC}
+"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -467,10 +495,10 @@ do_install() {
     printf "  Proxy port [%s]: " "${PROXY_PORT}"; read -r i
     [[ -n "${i}" ]] && PROXY_PORT="${i}"
     if port_in_use "${PROXY_PORT}"; then
-      log_warn "Port ${PROXY_PORT} is already in use by another process!"
-      log_dim  "  (hint: 3x-ui usually takes 443, try 4443 or 8443)"
-      printf "  Try a different port? [y/N]: "; read -r yn
-      [[ "${yn,,}" == "y" ]] && continue
+      log_warn "Port ${PROXY_PORT} is already in use! (hint: try 4443 or 8443)"
+      printf "  Enter a different port: "; read -r i
+      [[ -n "${i}" ]] && PROXY_PORT="${i}" || continue
+      continue
     fi
     break
   done
@@ -622,9 +650,9 @@ do_reconfigure() {
     local new_port="${PROXY_PORT}"
     [[ -n "${i}" ]] && new_port="${i}"
     if [[ "${new_port}" != "${PROXY_PORT}" ]] && port_in_use "${new_port}"; then
-      log_warn "Port ${new_port} is already in use!"
-      printf "  Use it anyway? [y/N]: "; read -r yn
-      [[ "${yn,,}" == "y" ]] && { PROXY_PORT="${new_port}"; break; }
+      log_warn "Port ${new_port} is already in use! (hint: try 4443 or 8443)"
+      printf "  Enter a different port: "; read -r i
+      [[ -n "${i}" ]] && new_port="${i}" || continue
       continue
     fi
     PROXY_PORT="${new_port}"; break
