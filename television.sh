@@ -323,41 +323,87 @@ show_stats() {
 # ──────────────────────────────────────────────────────────────
 # TUI DRAWING
 # ──────────────────────────────────────────────────────────────
-COLS=64
+COLS=66
+
+_rep() { printf "%${2}s" | tr ' ' "${1}"; }
+
+box_top()  { echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"; }
+box_bot()  { echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"; }
+box_sep()  { echo -e "${CYAN}╠$(_rep '═' $((COLS-2)))╣${NC}"; }
+box_sep2() { echo -e "${CYAN}╟$(_rep '─' $((COLS-2)))╢${NC}"; }
+box_empty(){ echo -e "${CYAN}║$(_rep ' ' $((COLS-2)))║${NC}"; }
+
+box_center() {
+  local text="$1"
+  local clean; clean=$(printf '%b' "${text}" | sed 's/\x1b\[[0-9;]*m//g')
+  local lpad=$(( (COLS - ${#clean} - 2) / 2 ))
+  local rpad=$(( COLS - ${#clean} - 2 - lpad ))
+  [[ ${lpad} -lt 0 ]] && lpad=0; [[ ${rpad} -lt 0 ]] && rpad=0
+  echo -e "${CYAN}║${NC}$(_rep ' ' ${lpad})${text}$(_rep ' ' ${rpad})${CYAN}║${NC}"
+}
+
+box_kv() {
+  local k="$1" v="$2"
+  local vclean; vclean=$(printf '%b' "${v}" | sed 's/\x1b\[[0-9;]*m//g')
+  local pad=$(( COLS - ${#k} - ${#vclean} - 5 ))
+  [[ ${pad} -lt 0 ]] && pad=0
+  echo -e "${CYAN}║${NC}  ${DIM}${k}${NC}  ${v}$(_rep ' ' ${pad})${CYAN}║${NC}"
+}
 
 draw_line() { printf "%${2:-$COLS}s\n" | tr ' ' "${1:--}"; }
 
 draw_header() {
-  local t="$1" tl pad
-  tl=${#t}; pad=$(( (COLS - tl - 2) / 2 ))
+  local t="$1"
   clear; echo
-  echo -e "${CYAN}$(draw_line '=')${NC}"
-  printf "${CYAN}|${NC}${BOLD}${WHITE}%${pad}s${NC}${BOLD}%s${NC}${WHITE}%${pad}s${CYAN}|${NC}\n" "" "${t}" ""
-  echo -e "${CYAN}$(draw_line '=')${NC}"
+  box_top
+  box_center "${BOLD}${WHITE}${t}${NC}"
+  box_bot
   echo
 }
 
-draw_section() { echo -e " ${BOLD}$*${NC}"; echo -e " ${DIM}$(draw_line '-' 60)${NC}"; }
-draw_row()     { printf "  ${DIM}%-22s${NC}  %b\n" "$1" "$2"; }
-press_enter()  { echo; echo -e " ${DIM}Press [Enter]...${NC}"; read -r; }
-read_choice()  { echo; printf " ${BOLD}${CYAN}[?]${NC} ${1:-Option}: "; read -r CHOICE; }
+draw_section() {
+  echo
+  echo -e "  ${BOLD}${CYAN}$*${NC}"
+  echo -e "  ${DIM}$(_rep '─' 58)${NC}"
+}
+
+draw_row()    { printf "  ${DIM}%-22s${NC}  %b\n" "$1" "$2"; }
+press_enter() { echo; echo -e "  ${DIM}Press [Enter]...${NC}"; read -r; }
+read_choice() { echo; printf "  ${BOLD}${CYAN}[?]${NC} ${1:-Option}: "; read -r CHOICE; }
 
 show_status() {
-  local ip rs is uc=0
+  local ip rs_text rs_color is_text uc=0 conns="—" traffic_info=""
   ip=$(get_ip)
-  is_running && rs="${LGREEN}${SYM_ON} Active${NC}" || rs="${LRED}${SYM_OFF} Stopped${NC}"
-  [[ -f "${INSTALL_DIR}/.installed" ]] && is="${LGREEN}${SYM_ON} Installed${NC}" || is="${YELLOW}${SYM_OFF} Not installed${NC}"
-  [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -vc '^$' "${SECRETS_FILE}" 2>/dev/null || echo 0)
-  draw_header "\U0001f4e1  TELEVISION  v${VERSION}"
-  draw_section "STATUS"
-  draw_row "Installation"     "${is}"
-  draw_row "Proxy"            "${rs}"
-  draw_row "IP"               "${ip}"
-  draw_row "Port"             "${PROXY_PORT}"
-  draw_row "Domain (FakeTLS)" "${PROXY_DOMAIN}"
-  draw_row "Protocol"         "${PROXY_PROTOCOL}"
-  draw_row "Metrics"          "127.0.0.1:${METRICS_PORT}"
-  draw_row "Users"            "${uc}"
+
+  if is_running; then
+    rs_text="● RUNNING"; rs_color="${LGREEN}"
+    local m; m=$(curl -s --max-time 1 "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || true)
+    if [[ -n "${m}" ]]; then
+      conns=$(echo "${m}" | grep "^telemt_connections_active " | awk '{print $NF}' 2>/dev/null || echo "0")
+      local rx tx
+      rx=$(echo "${m}" | grep "^telemt_bytes_received_total " | awk '{print $NF}' 2>/dev/null || echo "0")
+      tx=$(echo "${m}" | grep "^telemt_bytes_sent_total "     | awk '{print $NF}' 2>/dev/null || echo "0")
+      traffic_info="↓ $(format_bytes "${rx:-0}")  ↑ $(format_bytes "${tx:-0}")"
+    fi
+  else
+    rs_text="○ STOPPED"; rs_color="${LRED}"
+  fi
+
+  [[ -f "${INSTALL_DIR}/.installed" ]] && is_text="${LGREEN}Installed${NC}" || is_text="${YELLOW}Not installed${NC}"
+  [[ -f "${SECRETS_FILE}" ]] && uc=$(grep -c '|' "${SECRETS_FILE}" 2>/dev/null || echo 0)
+
+  clear; echo
+  echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"
+  box_center "${BOLD}${WHITE}📡  TELEVISION${NC}  ${DIM}v${VERSION}${NC}"
+  box_center "${DIM}Telegram MTProxy · Rust/tokio · J-L33T${NC}"
+  box_sep
+  box_kv "Engine"   "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
+  box_kv "IP:Port"  "${WHITE}${ip}:${PROXY_PORT}${NC}"
+  box_kv "Domain"   "${PROXY_DOMAIN}"
+  [[ -n "${traffic_info}" ]] && \
+  box_kv "Traffic"  "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}"
+  box_kv "Secrets"  "${uc} active"
+  echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
   echo
 }
 
@@ -613,45 +659,94 @@ do_uninstall() {
 # ──────────────────────────────────────────────────────────────
 # MAIN MENU
 # ──────────────────────────────────────────────────────────────
+menu_item() {
+  # menu_item "1" "Start proxy"  или  menu_item "u" "Uninstall" "red"
+  local key="$1" label="$2" color="${3:-}"
+  if [[ "${color}" == "red" ]]; then
+    echo -e "${CYAN}║${NC}  ${BOLD}${LRED}[${key}]${NC}  ${label}"
+  else
+    echo -e "${CYAN}║${NC}  ${BOLD}${CYAN}[${key}]${NC}  ${label}"
+  fi
+}
+
 main_menu() {
   load_settings
   while true; do
-    show_status; draw_section "MAIN MENU"; echo
+    show_status
+
+    # Меню в рамке
+    box_top
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
-      echo -e "  ${BOLD}1)${NC} Stop proxy"
-      echo -e "  ${BOLD}2)${NC} Restart proxy"
-      echo -e "  ${BOLD}3)${NC} User management"
-      echo -e "  ${BOLD}4)${NC} Show proxy links"
-      echo -e "  ${BOLD}5)${NC} Update telemt"
-      echo -e "  ${BOLD}6)${NC} View logs"
-      echo -e "  ${BOLD}7)${NC} Reconfigure"
-      echo -e "  ${BOLD}8)${NC} Statistics"
-      echo
-      echo -e "  ${BOLD}0)${NC} Full uninstall"
+      box_center "${BOLD}MAIN MENU${NC}"
+      box_sep2
+      box_empty
+      menu_item "1" "Proxy Management  ${DIM}(start / stop / restart)${NC}"
+      menu_item "2" "Secret Management ${DIM}(add / remove / toggle)${NC}"
+      menu_item "3" "Share Links"
+      menu_item "4" "Traffic & Stats"
+      menu_item "5" "Logs"
+      menu_item "6" "Settings          ${DIM}(port / domain / reconfigure)${NC}"
+      menu_item "7" "Update telemt"
+      box_empty
+      menu_item "u" "Uninstall" "red"
+      menu_item "0" "Exit"
     else
-      echo -e "  ${BOLD}1)${NC} Install television"
-      echo
-      echo -e "  ${BOLD}0)${NC} Exit"
+      box_center "${BOLD}MAIN MENU${NC}"
+      box_sep2
+      box_empty
+      menu_item "1" "Install television"
+      box_empty
+      menu_item "0" "Exit"
     fi
+    box_empty
+    echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
+
     read_choice "Option"
+
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
       case "${CHOICE}" in
-        1) do_stop; press_enter ;;
-        2) do_restart; press_enter ;;
-        3) user_menu ;;
-        4) show_links ;;
-        5) do_update ;;
-        6) show_logs ;;
-        7) do_reconfigure ;;
-        8) show_stats ;;
-        0) do_uninstall ;;
-        *) log_warn "Invalid option" ;;
+        1) proxy_mgmt_menu ;;
+        2) user_menu ;;
+        3) show_links ;;
+        4) show_stats ;;
+        5) show_logs ;;
+        6) do_reconfigure ;;
+        7) do_update ;;
+        u|U) do_uninstall ;;
+        0) exit 0 ;;
+        *) log_warn "Invalid option" ; sleep 1 ;;
       esac
     else
       case "${CHOICE}" in
-        1) do_install ;; 0) exit 0 ;; *) log_warn "Invalid option" ;;
+        1) do_install ;; 0) exit 0 ;; *) log_warn "Invalid option" ; sleep 1 ;;
       esac
     fi
+  done
+}
+
+proxy_mgmt_menu() {
+  while true; do
+    show_status
+    box_top
+    box_center "${BOLD}PROXY MANAGEMENT${NC}"
+    box_sep2
+    box_empty
+    if is_running; then
+      menu_item "1" "Stop proxy"
+      menu_item "2" "Restart proxy"
+    else
+      menu_item "1" "Start proxy"
+    fi
+    box_empty
+    menu_item "0" "Back"
+    box_empty
+    echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
+    read_choice "Option"
+    case "${CHOICE}" in
+      1) is_running && { do_stop; press_enter; } || { do_start; press_enter; } ;;
+      2) is_running && { do_restart; press_enter; } || log_warn "Proxy is not running" ;;
+      0) return ;;
+    esac
   done
 }
 
