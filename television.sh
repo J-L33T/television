@@ -443,6 +443,7 @@ do_install() {
   echo; draw_section "FIRST USER"
   printf "  Username [default]: "; read -r fl; [[ -z "${fl}" ]] && fl="default"
   local fs; fs=$(gen_secret)
+  mkdir -p "${INSTALL_DIR}"
   echo "${fl}|${fs}|enabled" > "${SECRETS_FILE}"
 
   save_settings
