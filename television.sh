@@ -463,18 +463,48 @@ install_deps() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# SELF-INSTALL (алиас в /usr/local/bin/television)
+# SELF-INSTALL (бинарь + systemd watcher)
 # ──────────────────────────────────────────────────────────────
 do_self_install() {
   local src
   src="$(realpath "$0")"
-  if [[ "${src}" == "${SELF_BIN}" ]]; then
-    log_ok "Already installed as '${SELF_BIN}' — just type 'television'"
-    return
+  if [[ "${src}" != "${SELF_BIN}" ]]; then
+    cp "${src}" "${SELF_BIN}"
+    chmod +x "${SELF_BIN}"
+    log_ok "Installed to ${SELF_BIN}"
+  else
+    log_ok "Binary already at ${SELF_BIN}"
   fi
-  cp "${src}" "${SELF_BIN}"
-  chmod +x "${SELF_BIN}"
-  log_ok "Installed to ${SELF_BIN}"
+
+  # Systemd path unit — следит за наличием бинаря
+  # Когда файл удаляется — запускается television-cleanup.service
+  cat > /etc/systemd/system/television-watch.path << 'UNIT'
+[Unit]
+Description=Watch for television binary removal
+
+[Path]
+PathExists=/usr/local/bin/television
+Unit=television-cleanup.service
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # Сервис который запускается когда бинарь исчезает
+  cat > /etc/systemd/system/television-cleanup.service << 'UNIT'
+[Unit]
+Description=Television proxy cleanup on binary removal
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'docker stop telemt 2>/dev/null; docker rm telemt 2>/dev/null; docker compose -f /opt/television/docker-compose.yml down 2>/dev/null; rm -rf /opt/television; echo "[television] Proxy stopped and cleaned up."'
+RemainAfterExit=no
+UNIT
+
+  systemctl daemon-reload
+  systemctl enable --now television-watch.path 2>/dev/null || true
+  log_ok "Systemd watcher installed — proxy will stop if binary is removed"
   log_ok "You can now run: ${BOLD}television${NC}"
 }
 
@@ -673,10 +703,18 @@ do_uninstall() {
   log_warn "This will STOP and REMOVE all proxy data and configuration."
   printf "  Type 'yes' to confirm: "; read -r confirm
   [[ "${confirm}" != "yes" ]] && { log_info "Cancelled."; press_enter; return; }
+  # Останавливаем systemd watcher ДО удаления файлов (иначе он сам всё почистит в фоне)
+  systemctl disable --now television-watch.path 2>/dev/null || true
+  systemctl stop television-cleanup.service 2>/dev/null || true
+  rm -f /etc/systemd/system/television-watch.path
+  rm -f /etc/systemd/system/television-cleanup.service
+  systemctl daemon-reload 2>/dev/null || true
+
   [[ -f "${COMPOSE_FILE}" ]] && docker compose -f "${COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
+  docker stop telemt 2>/dev/null || true
+  docker rm telemt 2>/dev/null || true
   docker rmi "${DOCKER_IMAGE}" 2>/dev/null || true
   rm -rf "${INSTALL_DIR}"
-  # Убираем бинарь только если он указывает на этот скрипт
   [[ -f "${SELF_BIN}" ]] && rm -f "${SELF_BIN}" && log_ok "Removed ${SELF_BIN}"
   log_ok "Television uninstalled."; press_enter; exit 0
 }
