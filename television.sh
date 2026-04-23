@@ -298,14 +298,15 @@ show_stats() {
   if ! is_running; then
     log_warn "Proxy is not running."; press_enter; return
   fi
+  set +eo pipefail 2>/dev/null || true
 
-  local logs; logs=$(docker compose -f "${COMPOSE_FILE}" logs --tail=1000 --no-color 2>/dev/null || true)
+  local logs; logs=$(docker compose -f "${COMPOSE_FILE}" logs --tail=1000 --no-color 2>/dev/null)
 
-  local total_conns unique_ips last_ip errors uptime_str=""
-  total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null) || total_conns=0
-  unique_ips=$(echo "${logs}" | grep -oE "peer=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" 2>/dev/null | sort -u | wc -l) || unique_ips=0
-  last_ip=$(echo "${logs}" | grep "Connection closed" 2>/dev/null | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1) || last_ip=""
-  errors=$(echo "${logs}" | grep -c " ERROR\| WARN" 2>/dev/null) || errors=0
+  local total_conns=0 unique_ips=0 last_ip="" errors=0 uptime_str=""
+  total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null); total_conns=${total_conns:-0}
+  unique_ips=$(echo "${logs}" | grep -oE "peer=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" 2>/dev/null | sort -u | wc -l); unique_ips=${unique_ips:-0}
+  last_ip=$(echo "${logs}" | grep "Connection closed" 2>/dev/null | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1); last_ip=${last_ip:-""}
+  errors=$(echo "${logs}" | grep -c " ERROR\| WARN" 2>/dev/null); errors=${errors:-0}
 
   local started; started=$(docker inspect telemt --format='{{.State.StartedAt}}' 2>/dev/null || true)
   if [[ -n "${started}" ]]; then
@@ -741,25 +742,27 @@ user_menu() {
 show_logs() {
   draw_header "LOGS"
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; press_enter; return; }
+  set +eo pipefail 2>/dev/null || true
   echo -e "  ${DIM}Showing important events (errors, connections, startup)${NC}\n"
-  docker compose -f "${COMPOSE_FILE}" logs --tail=200 --no-color 2>&1 | \
-    { grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" || true; } | \
-    tail -30 | \
-    sed 's/telemt  | //' | \
-    sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T\([0-9:]\{8\}\)\.[0-9]*Z/\1/' | \
-    while IFS= read -r line; do
-      if echo "${line}" | grep -q "ERROR"; then
-        echo -e "  ${LRED}${line}${NC}"
-      elif echo "${line}" | grep -q "WARN"; then
-        echo -e "  ${YELLOW}${line}${NC}"
-      elif echo "${line}" | grep -q "Listening\|ME pool READY\|Downloaded"; then
-        echo -e "  ${LGREEN}${line}${NC}"
-      else
-        echo -e "  ${DIM}${line}${NC}"
-      fi
-    done
+  local raw; raw=$(docker compose -f "${COMPOSE_FILE}" logs --tail=200 --no-color 2>&1)
+  local filtered; filtered=$(echo "${raw}" | grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" 2>/dev/null | tail -30)
+  if [[ -z "${filtered}" ]]; then
+    log_dim "No notable events found in recent logs."
+  else
+    echo "${filtered}" |       sed "s/telemt  | //" |       sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T\([0-9:]\{8\}\)\.[0-9]*Z/\1/" |       while IFS= read -r line; do
+        if echo "${line}" | grep -q "ERROR"; then
+          echo -e "  ${LRED}${line}${NC}"
+        elif echo "${line}" | grep -q "WARN"; then
+          echo -e "  ${YELLOW}${line}${NC}"
+        elif echo "${line}" | grep -q "Listening\|ME pool READY\|Downloaded"; then
+          echo -e "  ${LGREEN}${line}${NC}"
+        else
+          echo -e "  ${DIM}${line}${NC}"
+        fi
+      done
+  fi
   echo
-  echo -e "  ${DIM}(full logs: docker compose -f ${COMPOSE_FILE} logs -f)${NC}"
+  echo -e "  ${DIM}(full logs: sudo docker logs telemt -f)${NC}"
   press_enter
 }
 
