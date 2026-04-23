@@ -300,7 +300,7 @@ show_stats() {
   fi
   set +eo pipefail 2>/dev/null || true
 
-  local logs; logs=$(docker compose -f "${COMPOSE_FILE}" logs --tail=1000 --no-color 2>/dev/null)
+  local logs; logs=$(docker logs telemt --tail=1000 --no-color 2>/dev/null)
 
   local total_conns=0 unique_ips=0 last_ip="" errors=0 uptime_str=""
   total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null); total_conns=${total_conns:-0}
@@ -744,7 +744,7 @@ show_logs() {
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; press_enter; return; }
   set +eo pipefail 2>/dev/null || true
   echo -e "  ${DIM}Showing important events (errors, connections, startup)${NC}\n"
-  local raw; raw=$(docker compose -f "${COMPOSE_FILE}" logs --tail=200 --no-color 2>&1)
+  local raw; raw=$(docker logs telemt --tail=200 --no-color 2>&1)
   local filtered; filtered=$(echo "${raw}" | grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" 2>/dev/null | tail -30)
   if [[ -z "${filtered}" ]]; then
     log_dim "No notable events found in recent logs."
