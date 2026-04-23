@@ -466,14 +466,24 @@ install_deps() {
 # SELF-INSTALL (бинарь + systemd watcher)
 # ──────────────────────────────────────────────────────────────
 do_self_install() {
-  local src
-  src="$(realpath "$0")"
-  if [[ "${src}" != "${SELF_BIN}" ]]; then
-    cp "${src}" "${SELF_BIN}"
+  # Если уже на месте — ничего не делаем
+  if [[ "$(realpath "$0" 2>/dev/null)" == "${SELF_BIN}" ]]; then
+    log_ok "Binary already at ${SELF_BIN}"
+  elif [[ -f "$0" ]] && [[ "$0" != /proc/* ]]; then
+    # Запущен из реального файла
+    cp "$0" "${SELF_BIN}"
     chmod +x "${SELF_BIN}"
     log_ok "Installed to ${SELF_BIN}"
   else
-    log_ok "Binary already at ${SELF_BIN}"
+    # Запущен через pipe (bash <(curl ...)) — скачиваем с GitHub
+    local repo_url="https://raw.githubusercontent.com/J-L33T/television/main/television.sh"
+    if curl -fsSL "${repo_url}" -o "${SELF_BIN}" 2>/dev/null; then
+      chmod +x "${SELF_BIN}"
+      log_ok "Downloaded and installed to ${SELF_BIN}"
+    else
+      log_warn "Could not install to ${SELF_BIN} — run 'television self-install' later"
+      return 0
+    fi
   fi
 
   # Systemd path unit — следит за наличием бинаря
