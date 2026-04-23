@@ -27,6 +27,30 @@ WHITE="\033[1;37m";  DIM="\033[2m"
 BOLD="\033[1m";      NC="\033[0m"
 SYM_OK="✓"; SYM_ERR="✗"; SYM_WARN="!"; SYM_ARROW="→"; SYM_ON="●"; SYM_OFF="○"
 
+show_banner() {
+  clear
+  echo -e "${CYAN}"
+  echo '  ████████╗███████╗██╗     ███████╗'
+  echo '  ╚══██╔══╝██╔════╝██║     ██╔════╝'
+  echo '     ██║   █████╗  ██║     █████╗  '
+  echo '     ██║   ██╔══╝  ██║     ██╔══╝  '
+  echo '     ██║   ███████╗███████╗███████╗ '
+  echo '     ╚═╝   ╚══════╝╚══════╝╚══════╝ '
+  echo '  ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗'
+  echo '  ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║'
+  echo '  ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║'
+  echo '  ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║'
+  echo '   ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║'
+  echo '    ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝'
+  echo -e "${NC}"
+  echo -e "  ${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "  ${CYAN}║${NC}  ${DIM}Telegram MTProxy Manager  v${VERSION}${NC}           ${CYAN}║${NC}"
+  echo -e "  ${CYAN}║${NC}  ${DIM}Powered by telemt (Rust/tokio)${NC}              ${CYAN}║${NC}"
+  echo -e "  ${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo
+  sleep 0.5
+}
+
 log_ok()   { echo -e " ${LGREEN}${SYM_OK}${NC}  $*"; }
 log_err()  { echo -e " ${LRED}${SYM_ERR}${NC}  $*" >&2; }
 log_warn() { echo -e " ${YELLOW}${SYM_WARN}${NC}  $*"; }
@@ -323,22 +347,13 @@ show_stats() {
 
 # Ширина терминала, макс 80
 TERM_W=$(tput cols 2>/dev/null || echo 70)
-[[ $TERM_W -gt 80 ]] && TERM_W=80
-[[ $TERM_W -lt 50 ]] && TERM_W=60
+[[ $TERM_W -gt 120 ]] && TERM_W=120
+[[ $TERM_W -lt 50 ]]  && TERM_W=60
 
-# Длина строки без ANSI (pure bash, без subshell)
+# Длина строки без ANSI — через printf + sed (надёжно для любых escape-последовательностей)
 _strlen() {
-  local s="$1" esc=$'\033' clean=""
-  # нормализуем \033 -> реальный ESC
-  s="${s//$'\\033'/$esc}"
-  clean="$s"
-  while [[ "$clean" == *"${esc}["* ]]; do
-    local before="${clean%%${esc}\[*}"
-    local rest="${clean#*${esc}\[}"
-    local after="${rest#*m}"
-    [[ "$rest" == "$after" ]] && break
-    clean="${before}${after}"
-  done
+  local clean
+  clean=$(printf '%b' "$1" | sed 's/\[[0-9;]*m//g; s/[^[]*//g')
   echo "${#clean}"
 }
 
@@ -350,28 +365,33 @@ _rep() {
 }
 
 # Строка рамки с текстом по центру
+# $1 = текст (может содержать цвета), $2 = тот же текст без цветов
 _box_center() {
-  local text="$1" W="${2:-$TERM_W}"
-  local inner=$(( W - 2 ))
-  local len; len=$(_strlen "$text")
+  local text="$1" plain="$2" inner=$(( TERM_W - 2 ))
+  local len=${#plain}
   local lpad=$(( (inner - len) / 2 ))
   local rpad=$(( inner - len - lpad ))
   [[ $lpad -lt 0 ]] && lpad=0
   [[ $rpad -lt 0 ]] && rpad=0
-  printf "${CYAN}║${NC}%s%b%s${CYAN}║${NC}
-" "$(_rep ' ' $lpad)" "$text" "$(_rep ' ' $rpad)"
+  echo -ne "${CYAN}║${NC}"
+  _rep ' ' $lpad
+  echo -ne "$text"
+  _rep ' ' $rpad
+  echo -e "${CYAN}║${NC}"
 }
 
 # KV строка внутри рамки
 _box_kv() {
-  local label="$1" val="$2" W="${3:-$TERM_W}"
-  local inner=$(( W - 2 ))
-  local vlen; vlen=$(_strlen "$val")
-  local content="  ${label}   "
-  local pad=$(( inner - ${#content} - vlen ))
+  local label="$1" val="$2"
+  local inner=$(( TERM_W - 2 ))
+  local vclean; vclean=$(echo -e "$val" | sed "s/\[[0-9;]*m//g")
+  local prefix="  ${label}   "
+  local pad=$(( inner - ${#prefix} - ${#vclean} ))
   [[ $pad -lt 0 ]] && pad=0
-  printf "${CYAN}║${NC}${DIM}%s${NC}%b%s${CYAN}║${NC}
-" "  ${label}   " "$val" "$(_rep ' ' $pad)"
+  echo -ne "${CYAN}║${NC}${DIM}${prefix}${NC}"
+  echo -ne "$val"
+  _rep ' ' $pad
+  echo -e "${CYAN}║${NC}"
 }
 
 # Пункт меню (без рамки, просто строка)
@@ -402,7 +422,7 @@ draw_header() {
   local title="$1"
   clear; echo
   _box_top
-  _box_center "${BOLD}${WHITE}${title}${NC}"
+  _box_center "${BOLD}${WHITE}${title}${NC}" "${title}"
   _box_bot
   echo
 }
@@ -422,24 +442,28 @@ read_choice() { echo; printf "  ${BOLD}${CYAN}[?]${NC} %s: " "${1:-Option}"; rea
 
 _draw_menu_box() {
   TERM_W=$(tput cols 2>/dev/null || echo 70)
-  [[ $TERM_W -gt 80 ]] && TERM_W=80
-  [[ $TERM_W -lt 50 ]] && TERM_W=60
-  _box_top
-  _box_center "${BOLD}$1${NC}"
-  _box_sep2
-  _box_empty
+  [[ $TERM_W -gt 120 ]] && TERM_W=120
+  [[ $TERM_W -lt 50 ]]  && TERM_W=60
+  echo
+  printf "${CYAN}╔%s╗${NC}
+" "$(_rep '═' $((TERM_W-2)))"
+  _box_center "${BOLD}${WHITE}$1${NC}" "$1"
+  printf "${CYAN}╠%s╣${NC}
+" "$(_rep '═' $((TERM_W-2)))"
+  echo
 }
 
 _draw_menu_bottom() {
-  _box_empty
-  _box_bot
+  echo
+  printf "${CYAN}╚%s╝${NC}
+" "$(_rep '═' $((TERM_W-2)))"
 }
 
 show_status() {
   # Обновляем ширину терминала каждый раз
   TERM_W=$(tput cols 2>/dev/null || echo 70)
-  [[ $TERM_W -gt 80 ]] && TERM_W=80
-  [[ $TERM_W -lt 50 ]] && TERM_W=60
+  [[ $TERM_W -gt 120 ]] && TERM_W=120
+  [[ $TERM_W -lt 50 ]]  && TERM_W=60
 
   local ip rs_text rs_color is_text uc=0 traffic_info="" conns="—"
   ip=$(get_ip)
@@ -468,8 +492,8 @@ show_status() {
 
   clear; echo
   _box_top
-  _box_center "${BOLD}${WHITE} TELEVISION  v${VERSION}${NC}"
-  _box_center "${DIM}Telegram MTProxy - Rust/tokio - J-L33T${NC}"
+  _box_center "${BOLD}${WHITE} TELEVISION  v${VERSION}${NC}" " TELEVISION  v${VERSION}"
+  _box_center "${DIM}Telegram MTProxy - Rust/tokio - J-L33T${NC}" "Telegram MTProxy - Rust/tokio - J-L33T"
   _box_sep
   _box_kv "Engine " "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
   _box_kv "IP:Port" "${WHITE}${ip}:${PROXY_PORT}${NC}"
@@ -784,6 +808,7 @@ menu_item() {
 
 main_menu() {
   load_settings
+  show_banner
   while true; do
     show_status
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
