@@ -1,62 +1,68 @@
 # 📡 television
 
-**Telegram MTProxy manager** powered by [telemt](https://github.com/telemt/telemt) — лёгкий Rust-прокси с поддержкой FakeTLS.
+**Telegram MTProxy manager** powered by [telemt](https://github.com/telemt/telemt) — Rust-прокси с поддержкой FakeTLS и Middle Proxy режима.
 
 > Работает поверх официального `ghcr.io/telemt/telemt:latest` — всегда актуальная версия.
 
 ---
 
-## 🚀 Установка (одна команда)
+## 🚀 Установка
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/J-L33T/television/main/install.sh)
 ```
 
-Скрипт скачает `television` в `/usr/local/bin/` и сразу запустит интерактивный мастер установки.
+Скрипт установит `television` в `/usr/local/bin/` и откроет интерактивное меню. После установки достаточно просто набрать:
+
+```bash
+television
+```
 
 ---
 
-## 📋 Что умеет
+## 📋 Возможности
 
 - 🔧 **Установка** — настройка порта, FakeTLS домена, протокола; автоустановка Docker
-- 👥 **Управление пользователями** — добавить / удалить / вкл/выкл, именованные ссылки
+- 👥 **Управление пользователями** — добавить / удалить / включить / выключить
 - 🔗 **Proxy-ссылки** — генерирует `tg://proxy?...` с правильным `ee`-секретом
-- 🔄 **Обновление** — `docker pull ghcr.io/telemt/telemt:latest` одной кнопкой
-- 📊 **Логи** — прямо в TUI
+- 📊 **Статистика** — сессии, уникальные IP, uptime
+- 📋 **Логи** — фильтрованный вывод прямо в TUI
+- 🔄 **Обновление** — `docker pull` одной кнопкой
 - ⚙️ **Реконфигурация** — смена порта / домена без переустановки
+- 🔁 **Автозапуск** — systemd-сервис, прокси стартует при перезагрузке сервера
 
 ---
 
 ## 🖥 TUI
 
 ```
-══════════════════════════════════════════════════════════════
-                  📡  TELEVISION  v0.1.1
-══════════════════════════════════════════════════════════════
+╔══════════════════════════════════════════════════════════════════╗
+║                      TELEVISION  v0.2.0                         ║
+║              Telegram MTProxy - Rust/tokio - J-L33T             ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Engine    telemt :latest  Status: ● RUNNING                    ║
+║  IP:Port   1.2.3.4:8443                                         ║
+║  Domain    cloudflare.com                                        ║
+║  Secrets   2 active                                             ║
+╚══════════════════════════════════════════════════════════════════╝
 
- STATUS
- ──────────────────────────────────────────────────────────
-  Installation         ● Installed
-  Proxy                ● Active
-  IP                   1.2.3.4
-  Port                 443
-  Domain (FakeTLS)     cloudflare.com
-  Protocol             tls
-  Users                3
+╔══════════════════════════════════════════════════════════════════╗
+║                         MAIN MENU                               ║
+╠══════════════════════════════════════════════════════════════════╣
 
- MAIN MENU
- ──────────────────────────────────────────────────────────
-  1) Stop proxy
-  2) Restart proxy
-  3) User management
-  4) Show proxy links
-  5) Update telemt
-  6) View logs
-  7) Reconfigure
+  [1]  Proxy Management  (start / stop / restart)
+  [2]  Secret Management (add / remove / toggle)
+  [3]  Share Links
+  [4]  Traffic & Stats
+  [5]  Logs
+  [6]  Settings          (port / domain / reconfigure)
+  [7]  Update telemt
 
-  0) Full uninstall
+  [s]  Install/reinstall 'television' command
+  [u]  Uninstall
+  [0]  Exit
 
- [?] Option:
+╚══════════════════════════════════════════════════════════════════╝
 ```
 
 ---
@@ -67,21 +73,28 @@ bash <(curl -fsSL https://raw.githubusercontent.com/J-L33T/television/main/insta
 television install
 television start / stop / restart
 television status
+television logs
+television stats
 television add-user <name>
 television list-users
 television links
 television update
-television logs
+television self-install
 ```
 
 ---
 
 ## 🔧 Технические детали
 
-- Docker образ: `ghcr.io/telemt/telemt:latest` (официальный, всегда свежий)
-- Конфиг: `/opt/television/telemt.toml` (официальный формат telemt)
-- Секреты: `/opt/television/secrets.conf`
-- Режим сети: `host` (нет NAT, нет потерь порта)
+| Параметр | Значение |
+|---|---|
+| Docker образ | `ghcr.io/telemt/telemt:latest` |
+| Конфиг | `/opt/television/config.toml` |
+| Секреты | `/opt/television/secrets.conf` |
+| Настройки | `/opt/television/settings.conf` |
+| Автозапуск | `systemd` — `television.service` |
+| Режим прокси | Middle Proxy (полное подключение к серверам Telegram) |
+| Маскировка | FakeTLS — трафик выглядит как обычный HTTPS |
 
 ---
 
