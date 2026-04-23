@@ -809,6 +809,15 @@ menu_item() {
 main_menu() {
   load_settings
   show_banner
+  # Если запущен не из /usr/local/bin — предложить установить
+  if [[ "$(realpath "$0" 2>/dev/null)" != "${SELF_BIN}" ]] && [[ ! -f "${SELF_BIN}" ]]; then
+    echo -e "  ${YELLOW}!${NC}  Script is not installed as a system command."
+    printf "  Install as '${BOLD}television${NC}' command? [Y/n]: "; read -r yn
+    if [[ "${yn,,}" != "n" ]]; then
+      do_self_install
+      echo
+    fi
+  fi
   while true; do
     show_status
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
@@ -823,9 +832,16 @@ main_menu() {
       echo
       _menu_item "u" "Uninstall" "red"
       _menu_item "0" "Exit"
+      if [[ "$(realpath "$0" 2>/dev/null)" != "${SELF_BIN}" ]]; then
+        echo
+        _menu_item "s" "Install as '${BOLD}television${NC}' command"
+      fi
     else
       _draw_menu_box "MAIN MENU"
       _menu_item "1" "Install television"
+      if [[ "$(realpath "$0" 2>/dev/null)" != "${SELF_BIN}" ]]; then
+        _menu_item "s" "Install as '${BOLD}television${NC}' command"
+      fi
       echo
       _menu_item "0" "Exit"
     fi
@@ -841,12 +857,16 @@ main_menu() {
         6) do_reconfigure ;;
         7) do_update ;;
         u|U) do_uninstall ;;
+        s|S) do_self_install; press_enter ;;
         0) exit 0 ;;
         *) log_warn "Invalid option"; sleep 1 ;;
       esac
     else
       case "${CHOICE}" in
-        1) do_install ;; 0) exit 0 ;; *) log_warn "Invalid option"; sleep 1 ;;
+        1) do_install ;;
+        s|S) do_self_install; press_enter ;;
+        0) exit 0 ;;
+        *) log_warn "Invalid option"; sleep 1 ;;
       esac
     fi
   done
