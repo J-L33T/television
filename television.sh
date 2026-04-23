@@ -302,10 +302,10 @@ show_stats() {
   local logs; logs=$(docker compose -f "${COMPOSE_FILE}" logs --tail=1000 --no-color 2>/dev/null || true)
 
   local total_conns unique_ips last_ip errors uptime_str=""
-  total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null || echo "0")
-  unique_ips=$(echo "${logs}" | grep -oE "peer=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | sort -u | wc -l)
-  last_ip=$(echo "${logs}" | grep "Connection closed" | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1)
-  errors=$(echo "${logs}" | grep -c " ERROR\| WARN" 2>/dev/null || echo "0")
+  total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null) || total_conns=0
+  unique_ips=$(echo "${logs}" | grep -oE "peer=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" 2>/dev/null | sort -u | wc -l) || unique_ips=0
+  last_ip=$(echo "${logs}" | grep "Connection closed" 2>/dev/null | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1) || last_ip=""
+  errors=$(echo "${logs}" | grep -c " ERROR\| WARN" 2>/dev/null) || errors=0
 
   local started; started=$(docker inspect telemt --format='{{.State.StartedAt}}' 2>/dev/null || true)
   if [[ -n "${started}" ]]; then
@@ -743,7 +743,7 @@ show_logs() {
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; press_enter; return; }
   echo -e "  ${DIM}Showing important events (errors, connections, startup)${NC}\n"
   docker compose -f "${COMPOSE_FILE}" logs --tail=200 --no-color 2>&1 | \
-    grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" | \
+    { grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" || true; } | \
     tail -30 | \
     sed 's/telemt  | //' | \
     sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T\([0-9:]\{8\}\)\.[0-9]*Z/\1/' | \
