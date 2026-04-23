@@ -486,35 +486,26 @@ do_self_install() {
     fi
   fi
 
-  # Systemd path unit — следит за наличием бинаря
-  # Когда файл удаляется — запускается television-cleanup.service
-  cat > /etc/systemd/system/television-watch.path << 'UNIT'
+  # Создаём systemd сервис для автозапуска прокси при перезагрузке сервера
+  cat > /etc/systemd/system/television.service << 'UNIT'
 [Unit]
-Description=Watch for television binary removal
+Description=Television MTProxy
+After=docker.service
+Requires=docker.service
 
-[Path]
-PathExists=/usr/local/bin/television
-Unit=television-cleanup.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker compose -f /opt/television/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/television/docker-compose.yml down
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 
-  # Сервис который запускается когда бинарь исчезает
-  cat > /etc/systemd/system/television-cleanup.service << 'UNIT'
-[Unit]
-Description=Television proxy cleanup on binary removal
-After=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'docker stop telemt 2>/dev/null; docker rm telemt 2>/dev/null; docker compose -f /opt/television/docker-compose.yml down 2>/dev/null; rm -rf /opt/television; echo "[television] Proxy stopped and cleaned up."'
-RemainAfterExit=no
-UNIT
-
   systemctl daemon-reload
-  systemctl enable --now television-watch.path 2>/dev/null || true
-  log_ok "Systemd watcher installed — proxy will stop if binary is removed"
+  systemctl enable television.service 2>/dev/null || true
+  log_ok "Systemd service installed — proxy will auto-start on reboot"
   log_ok "You can now run: ${BOLD}television${NC}"
 }
 
@@ -713,11 +704,8 @@ do_uninstall() {
   log_warn "This will STOP and REMOVE all proxy data and configuration."
   printf "  Type 'yes' to confirm: "; read -r confirm
   [[ "${confirm}" != "yes" ]] && { log_info "Cancelled."; press_enter; return; }
-  # Останавливаем systemd watcher ДО удаления файлов (иначе он сам всё почистит в фоне)
-  systemctl disable --now television-watch.path 2>/dev/null || true
-  systemctl stop television-cleanup.service 2>/dev/null || true
-  rm -f /etc/systemd/system/television-watch.path
-  rm -f /etc/systemd/system/television-cleanup.service
+  systemctl disable --now television.service 2>/dev/null || true
+  rm -f /etc/systemd/system/television.service
   systemctl daemon-reload 2>/dev/null || true
 
   [[ -f "${COMPOSE_FILE}" ]] && docker compose -f "${COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
