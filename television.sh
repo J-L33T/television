@@ -840,9 +840,6 @@ main_menu() {
       do_self_install
       echo
     fi
-  elif [[ -f "${SELF_BIN}" ]] && [[ "$(realpath "$0" 2>/dev/null)" == "${SELF_BIN}" ]]; then
-    echo -e "  ${LGREEN}✓${NC}  Command ${BOLD}television${NC} is available — just type it anywhere"
-    sleep 1
   fi
   while true; do
     show_status
@@ -856,18 +853,13 @@ main_menu() {
       _menu_item "6" "Settings          ${DIM}(port / domain / reconfigure)${NC}"
       _menu_item "7" "Update telemt"
       echo
+      _menu_item "s" "Install/reinstall 'television' command"
       _menu_item "u" "Uninstall" "red"
       _menu_item "0" "Exit"
-      if [[ "$(realpath "$0" 2>/dev/null)" != "${SELF_BIN}" ]]; then
-        echo
-        _menu_item "s" "Install as '${BOLD}television${NC}' command"
-      fi
     else
       _draw_menu_box "MAIN MENU"
       _menu_item "1" "Install television"
-      if [[ "$(realpath "$0" 2>/dev/null)" != "${SELF_BIN}" ]]; then
-        _menu_item "s" "Install as '${BOLD}television${NC}' command"
-      fi
+      _menu_item "s" "Install/reinstall 'television' command"
       echo
       _menu_item "0" "Exit"
     fi
