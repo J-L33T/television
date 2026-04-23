@@ -320,56 +320,97 @@ show_stats() {
 # ──────────────────────────────────────────────────────────────
 # TUI DRAWING
 # ──────────────────────────────────────────────────────────────
-COLS=66
 
-_rep() { local s=""; local i=0; while [[ $i -lt $2 ]]; do s+="$1"; i=$(( i + 1 )); done; printf '%s' "$s"; }
-
-box_top()  { echo -e "${CYAN}╔$(_rep '═' $((COLS-2)))╗${NC}"; }
-box_bot()  { echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"; }
-box_sep()  { echo -e "${CYAN}╠$(_rep '═' $((COLS-2)))╣${NC}"; }
-box_sep2() { echo -e "${CYAN}╟$(_rep '─' $((COLS-2)))╢${NC}"; }
-box_empty(){ echo -e "${CYAN}║$(_rep ' ' $((COLS-2)))║${NC}"; }
-
-box_center() {
-  local text="$1"
-  local clean; clean=$(printf '%b' "${text}" | sed 's/\x1b\[[0-9;]*m//g')
-  local lpad=$(( (COLS - ${#clean} - 2) / 2 ))
-  local rpad=$(( COLS - ${#clean} - 2 - lpad ))
-  [[ ${lpad} -lt 0 ]] && lpad=0; [[ ${rpad} -lt 0 ]] && rpad=0
-  echo -e "${CYAN}║${NC}$(_rep ' ' ${lpad})${text}$(_rep ' ' ${rpad})${CYAN}║${NC}"
+# Получаем ширину терминала, ограничиваем 50-72
+get_cols() {
+  local w
+  w=$(tput cols 2>/dev/null || echo 66)
+  [[ $w -lt 50 ]] && w=50
+  [[ $w -gt 72 ]] && w=72
+  echo $w
 }
 
-box_kv() {
-  local k="$1" v="$2"
-  local vclean; vclean=$(printf '%b' "${v}" | sed 's/\x1b\[[0-9;]*m//g')
-  local pad=$(( COLS - ${#k} - ${#vclean} - 5 ))
-  [[ ${pad} -lt 0 ]] && pad=0
-  echo -e "${CYAN}║${NC}  ${DIM}${k}${NC}  ${v}$(_rep ' ' ${pad})${CYAN}║${NC}"
+# Повторить символ N раз
+_rep() {
+  local char="$1" n="$2" i=0 s=""
+  while [[ $i -lt $n ]]; do s+="$char"; i=$(( i + 1 )); done
+  printf '%s' "$s"
 }
 
-draw_line() { printf "%${2:-$COLS}s\n" | tr ' ' "${1:--}"; }
+# Строка рамки с текстом по центру
+_box_center() {
+  local text="$1" W="$2"
+  local clean; clean=$(printf '%b' "${text}" | sed 's/\[[0-9;]*m//g')
+  local len=${#clean}
+  local lpad=$(( (W - len) / 2 ))
+  local rpad=$(( W - len - lpad ))
+  [[ $lpad -lt 0 ]] && lpad=0
+  [[ $rpad -lt 0 ]] && rpad=0
+  printf "${CYAN}║${NC}"
+  _rep ' ' $lpad
+  printf '%b' "${text}"
+  _rep ' ' $rpad
+  printf "${CYAN}║${NC}
+"
+}
+
+# KV строка: label слева, value справа с паддингом
+_box_kv() {
+  local label="$1" val="$2" W="$3"
+  local vclean; vclean=$(printf '%b' "${val}" | sed 's/\[[0-9;]*m//g')
+  local inner=$(( W - 2 ))
+  local content="  ${label}   ${vclean}"
+  local pad=$(( inner - ${#content} ))
+  [[ $pad -lt 0 ]] && pad=0
+  printf "${CYAN}║${NC}  ${DIM}${label}${NC}   ${val}"
+  _rep ' ' $pad
+  printf "${CYAN}║${NC}
+"
+}
+
+# Пункт меню
+_menu_item() {
+  local key="$1" label="$2" red="${3:-}"
+  if [[ -n "$red" ]]; then
+    printf "  ${BOLD}${LRED}[%s]${NC}  %b
+" "$key" "$label"
+  else
+    printf "  ${BOLD}${CYAN}[%s]${NC}  %b
+" "$key" "$label"
+  fi
+}
 
 draw_header() {
-  local t="$1"
+  local title="$1"
+  local W; W=$(get_cols)
+  local inner=$(( W - 2 ))
   clear; echo
-  box_top
-  box_center "${BOLD}${WHITE}${t}${NC}"
-  box_bot
+  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
+"
+  _box_center "${BOLD}${WHITE}${title}${NC}" $inner
+  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
+"
   echo
 }
 
 draw_section() {
+  local W; W=$(get_cols)
   echo
-  echo -e "  ${BOLD}${CYAN}$*${NC}"
-  echo -e "  ${DIM}$(_rep '─' 58)${NC}"
+  printf "  ${BOLD}${CYAN}%b${NC}
+" "$*"
+  printf "  ${DIM}"; _rep '─' $(( W - 4 )); printf "${NC}
+"
 }
 
-draw_row()    { printf "  ${DIM}%-22s${NC}  %b\n" "$1" "$2"; }
-press_enter() { echo; echo -e "  ${DIM}Press [Enter]...${NC}"; read -r; }
-read_choice() { echo; printf "  ${BOLD}${CYAN}[?]${NC} ${1:-Option}: "; read -r CHOICE; }
+draw_row()    { printf "  ${DIM}%-12s${NC}  %b
+" "$1" "$2"; }
+press_enter() { echo; printf "  ${DIM}Press [Enter]...${NC}"; read -r; }
+read_choice() { echo; printf "  ${BOLD}${CYAN}[?]${NC} %s: " "${1:-Option}"; read -r CHOICE; }
 
 show_status() {
-  local ip rs_text rs_color is_text uc=0 conns="—" traffic_info=""
+  local W; W=$(get_cols)
+  local inner=$(( W - 2 ))
+  local ip rs_text rs_color is_text uc=0 traffic_info="" conns="—"
   ip=$(get_ip)
 
   if is_running; then
@@ -395,40 +436,40 @@ show_status() {
   fi
 
   clear; echo
-  local W=$((COLS-2))
-  printf "${CYAN}╔"; _rep '═' $W; printf "╗${NC}
+  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
 "
-  # Title line — plain text, centered manually
-  local title=" TELEVISION  v${VERSION}"
-  local sub="Telegram MTProxy - Rust/tokio - J-L33T"
-  local tpad=$(( (W - ${#title}) / 2 ))
-  local spad=$(( (W - ${#sub}) / 2 ))
-  printf "${CYAN}║${NC}"; _rep ' ' $tpad; printf "${BOLD}${WHITE}${title}${NC}"; _rep ' ' $(( W - tpad - ${#title} )); printf "${CYAN}║${NC}
+  _box_center "${BOLD}${WHITE} TELEVISION  v${VERSION}${NC}" $inner
+  _box_center "${DIM}Telegram MTProxy - Rust/tokio - J-L33T${NC}" $inner
+  printf "${CYAN}╠"; _rep '═' $inner; printf "╣${NC}
 "
-  printf "${CYAN}║${NC}"; _rep ' ' $spad; printf "${DIM}${sub}${NC}"; _rep ' ' $(( W - spad - ${#sub} )); printf "${CYAN}║${NC}
-"
-  printf "${CYAN}╠"; _rep '═' $W; printf "╣${NC}
-"
-  # KV rows — fixed label width 10, value fills rest
-  _box_row "Engine"   "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
-  _box_row "IP:Port"  "${WHITE}${ip}:${PROXY_PORT}${NC}"
-  _box_row "Domain"   "${PROXY_DOMAIN}"
-  [[ -n "${traffic_info}" ]] && _box_row "Traffic" "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}"
-  _box_row "Secrets"  "${uc} active"
-  printf "${CYAN}╚"; _rep '═' $W; printf "╝${NC}
+  _box_kv "Engine " "telemt :latest  Status: ${rs_color}${rs_text}${NC}" $inner
+  _box_kv "IP:Port" "${WHITE}${ip}:${PROXY_PORT}${NC}" $inner
+  _box_kv "Domain " "${PROXY_DOMAIN}" $inner
+  [[ -n "${traffic_info}" ]] && _box_kv "Traffic" "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}" $inner
+  _box_kv "Secrets" "${uc} active" $inner
+  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
 "
   echo
 }
 
-# Вспомогательная функция для строки KV внутри рамки
-# Считает длину через stripped текст
-_box_row() {
-  local label="$1" val="$2"
-  local val_clean; val_clean=$(printf '%b' "${val}" | sed 's/\[[0-9;]*m//g')
-  local content="  ${label}   ${val_clean}"
-  local pad=$(( COLS - ${#content} - 2 ))
-  [[ ${pad} -lt 0 ]] && pad=0
-  printf "${CYAN}║${NC}  ${DIM}${label}${NC}   ${val}"; _rep ' ' $pad; printf "${CYAN}║${NC}
+_draw_menu_box() {
+  local W; W=$(get_cols)
+  local inner=$(( W - 2 ))
+  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
+"
+  _box_center "${BOLD}$1${NC}" $inner
+  printf "${CYAN}╟"; _rep '─' $inner; printf "╢${NC}
+"
+  printf "${CYAN}║${NC}"; _rep ' ' $inner; printf "${CYAN}║${NC}
+"
+}
+
+_draw_menu_bottom() {
+  local W; W=$(get_cols)
+  local inner=$(( W - 2 ))
+  printf "${CYAN}║${NC}"; _rep ' ' $inner; printf "${CYAN}║${NC}
+"
+  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
 "
 }
 
@@ -642,14 +683,18 @@ show_links() {
 
 user_menu() {
   while true; do
-    show_status; draw_section "USER MANAGEMENT"; echo
+    show_status
+    _draw_menu_box "SECRET MANAGEMENT"
     list_users_inline || true
-    echo -e "  ${BOLD}1)${NC} Add user"
-    echo -e "  ${BOLD}2)${NC} Remove user"
-    echo -e "  ${BOLD}3)${NC} Toggle (enable/disable)"
-    echo -e "  ${BOLD}4)${NC} Show proxy links"
-    echo -e "  ${BOLD}5)${NC} User statistics"
-    echo -e "  ${BOLD}0)${NC} Back"
+    echo
+    _menu_item "1" "Add user"
+    _menu_item "2" "Remove user"
+    _menu_item "3" "Toggle (enable/disable)"
+    _menu_item "4" "Show proxy links"
+    _menu_item "5" "User statistics"
+    echo
+    _menu_item "0" "Back"
+    _draw_menu_bottom
     read_choice "Option"
     case "${CHOICE}" in
       1) add_user ;; 2) remove_user ;; 3) toggle_user ;;
@@ -734,36 +779,26 @@ main_menu() {
   load_settings
   while true; do
     show_status
-
-    # Меню в рамке
-    box_top
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
-      box_center "${BOLD}MAIN MENU${NC}"
-      box_sep2
-      box_empty
-      menu_item "1" "Proxy Management  ${DIM}(start / stop / restart)${NC}"
-      menu_item "2" "Secret Management ${DIM}(add / remove / toggle)${NC}"
-      menu_item "3" "Share Links"
-      menu_item "4" "Traffic & Stats"
-      menu_item "5" "Logs"
-      menu_item "6" "Settings          ${DIM}(port / domain / reconfigure)${NC}"
-      menu_item "7" "Update telemt"
-      box_empty
-      menu_item "u" "Uninstall" "red"
-      menu_item "0" "Exit"
+      _draw_menu_box "MAIN MENU"
+      _menu_item "1" "Proxy Management  ${DIM}(start / stop / restart)${NC}"
+      _menu_item "2" "Secret Management ${DIM}(add / remove / toggle)${NC}"
+      _menu_item "3" "Share Links"
+      _menu_item "4" "Traffic & Stats"
+      _menu_item "5" "Logs"
+      _menu_item "6" "Settings          ${DIM}(port / domain / reconfigure)${NC}"
+      _menu_item "7" "Update telemt"
+      echo
+      _menu_item "u" "Uninstall" "red"
+      _menu_item "0" "Exit"
     else
-      box_center "${BOLD}MAIN MENU${NC}"
-      box_sep2
-      box_empty
-      menu_item "1" "Install television"
-      box_empty
-      menu_item "0" "Exit"
+      _draw_menu_box "MAIN MENU"
+      _menu_item "1" "Install television"
+      echo
+      _menu_item "0" "Exit"
     fi
-    box_empty
-    echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
-
+    _draw_menu_bottom
     read_choice "Option"
-
     if [[ -f "${INSTALL_DIR}/.installed" ]]; then
       case "${CHOICE}" in
         1) proxy_mgmt_menu ;;
@@ -775,11 +810,11 @@ main_menu() {
         7) do_update ;;
         u|U) do_uninstall ;;
         0) exit 0 ;;
-        *) log_warn "Invalid option" ; sleep 1 ;;
+        *) log_warn "Invalid option"; sleep 1 ;;
       esac
     else
       case "${CHOICE}" in
-        1) do_install ;; 0) exit 0 ;; *) log_warn "Invalid option" ; sleep 1 ;;
+        1) do_install ;; 0) exit 0 ;; *) log_warn "Invalid option"; sleep 1 ;;
       esac
     fi
   done
@@ -788,24 +823,20 @@ main_menu() {
 proxy_mgmt_menu() {
   while true; do
     show_status
-    box_top
-    box_center "${BOLD}PROXY MANAGEMENT${NC}"
-    box_sep2
-    box_empty
+    _draw_menu_box "PROXY MANAGEMENT"
     if is_running; then
-      menu_item "1" "Stop proxy"
-      menu_item "2" "Restart proxy"
+      _menu_item "1" "Stop proxy"
+      _menu_item "2" "Restart proxy"
     else
-      menu_item "1" "Start proxy"
+      _menu_item "1" "Start proxy"
     fi
-    box_empty
-    menu_item "0" "Back"
-    box_empty
-    echo -e "${CYAN}╚$(_rep '═' $((COLS-2)))╝${NC}"
+    echo
+    _menu_item "0" "Back"
+    _draw_menu_bottom
     read_choice "Option"
     case "${CHOICE}" in
       1) is_running && { do_stop; press_enter; } || { do_start; press_enter; } ;;
-      2) is_running && { do_restart; press_enter; } || log_warn "Proxy is not running" ;;
+      2) is_running && { do_restart; press_enter; } || { log_warn "Proxy is not running"; sleep 1; } ;;
       0) return ;;
     esac
   done
