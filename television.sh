@@ -321,54 +321,60 @@ show_stats() {
 # TUI DRAWING
 # ──────────────────────────────────────────────────────────────
 
-# Получаем ширину терминала, ограничиваем 60-80
-get_cols() {
-  local w
-  w=$(tput cols 2>/dev/null || echo 70)
-  [[ $w -lt 60 ]] && w=60
-  [[ $w -gt 80 ]] && w=80
-  echo $w
+# Ширина терминала, макс 80
+TERM_W=$(tput cols 2>/dev/null || echo 70)
+[[ $TERM_W -gt 80 ]] && TERM_W=80
+[[ $TERM_W -lt 50 ]] && TERM_W=60
+
+# Длина строки без ANSI (pure bash, без subshell)
+_strlen() {
+  local s="$1" esc=$'\033' clean=""
+  # нормализуем \033 -> реальный ESC
+  s="${s//$'\\033'/$esc}"
+  clean="$s"
+  while [[ "$clean" == *"${esc}["* ]]; do
+    local before="${clean%%${esc}\[*}"
+    local rest="${clean#*${esc}\[}"
+    local after="${rest#*m}"
+    [[ "$rest" == "$after" ]] && break
+    clean="${before}${after}"
+  done
+  echo "${#clean}"
 }
 
-# Повторить символ N раз
+# Повторить символ N раз (pure bash, без subshell)
 _rep() {
-  local char="$1" n="$2" i=0 s=""
-  while [[ $i -lt $n ]]; do s+="$char"; i=$(( i + 1 )); done
-  printf '%s' "$s"
+  local char="$1" n="$2" str
+  printf -v str '%*s' "$n" ''
+  printf '%s' "${str// /$char}"
 }
 
 # Строка рамки с текстом по центру
 _box_center() {
-  local text="$1" W="$2"
-  local clean; clean=$(printf '%b' "${text}" | sed 's/\[[0-9;]*m//g')
-  local len=${#clean}
-  local lpad=$(( (W - len) / 2 ))
-  local rpad=$(( W - len - lpad ))
+  local text="$1" W="${2:-$TERM_W}"
+  local inner=$(( W - 2 ))
+  local len; len=$(_strlen "$text")
+  local lpad=$(( (inner - len) / 2 ))
+  local rpad=$(( inner - len - lpad ))
   [[ $lpad -lt 0 ]] && lpad=0
   [[ $rpad -lt 0 ]] && rpad=0
-  printf "${CYAN}║${NC}"
-  _rep ' ' $lpad
-  printf '%b' "${text}"
-  _rep ' ' $rpad
-  printf "${CYAN}║${NC}
-"
+  printf "${CYAN}║${NC}%s%b%s${CYAN}║${NC}
+" "$(_rep ' ' $lpad)" "$text" "$(_rep ' ' $rpad)"
 }
 
-# KV строка: label слева, value справа с паддингом
+# KV строка внутри рамки
 _box_kv() {
-  local label="$1" val="$2" W="$3"
-  local vclean; vclean=$(printf '%b' "${val}" | sed 's/\[[0-9;]*m//g')
+  local label="$1" val="$2" W="${3:-$TERM_W}"
   local inner=$(( W - 2 ))
-  local content="  ${label}   ${vclean}"
-  local pad=$(( inner - ${#content} ))
+  local vlen; vlen=$(_strlen "$val")
+  local content="  ${label}   "
+  local pad=$(( inner - ${#content} - vlen ))
   [[ $pad -lt 0 ]] && pad=0
-  printf "${CYAN}║${NC}  ${DIM}${label}${NC}   ${val}"
-  _rep ' ' $pad
-  printf "${CYAN}║${NC}
-"
+  printf "${CYAN}║${NC}${DIM}%s${NC}%b%s${CYAN}║${NC}
+" "  ${label}   " "$val" "$(_rep ' ' $pad)"
 }
 
-# Пункт меню
+# Пункт меню (без рамки, просто строка)
 _menu_item() {
   local key="$1" label="$2" red="${3:-}"
   if [[ -n "$red" ]]; then
@@ -380,26 +386,33 @@ _menu_item() {
   fi
 }
 
+# Верх/низ/разделитель рамки
+_box_top()  { printf "${CYAN}╔%s╗${NC}
+" "$(_rep '═' $((TERM_W-2)))"; }
+_box_bot()  { printf "${CYAN}╚%s╝${NC}
+" "$(_rep '═' $((TERM_W-2)))"; }
+_box_sep()  { printf "${CYAN}╠%s╣${NC}
+" "$(_rep '═' $((TERM_W-2)))"; }
+_box_sep2() { printf "${CYAN}╟%s╢${NC}
+" "$(_rep '─' $((TERM_W-2)))"; }
+_box_empty(){ printf "${CYAN}║%s║${NC}
+" "$(_rep ' ' $((TERM_W-2)))"; }
+
 draw_header() {
   local title="$1"
-  local W; W=$(get_cols)
-  local inner=$(( W - 2 ))
   clear; echo
-  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
-"
-  _box_center "${BOLD}${WHITE}${title}${NC}" $inner
-  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
-"
+  _box_top
+  _box_center "${BOLD}${WHITE}${title}${NC}"
+  _box_bot
   echo
 }
 
 draw_section() {
-  local W; W=$(get_cols)
   echo
   printf "  ${BOLD}${CYAN}%b${NC}
 " "$*"
-  printf "  ${DIM}"; _rep '─' $(( W - 4 )); printf "${NC}
-"
+  printf "  ${DIM}%s${NC}
+" "$(_rep '─' $((TERM_W-6)))"
 }
 
 draw_row()    { printf "  ${DIM}%-12s${NC}  %b
@@ -407,9 +420,27 @@ draw_row()    { printf "  ${DIM}%-12s${NC}  %b
 press_enter() { echo; printf "  ${DIM}Press [Enter]...${NC}"; read -r; }
 read_choice() { echo; printf "  ${BOLD}${CYAN}[?]${NC} %s: " "${1:-Option}"; read -r CHOICE; }
 
+_draw_menu_box() {
+  TERM_W=$(tput cols 2>/dev/null || echo 70)
+  [[ $TERM_W -gt 80 ]] && TERM_W=80
+  [[ $TERM_W -lt 50 ]] && TERM_W=60
+  _box_top
+  _box_center "${BOLD}$1${NC}"
+  _box_sep2
+  _box_empty
+}
+
+_draw_menu_bottom() {
+  _box_empty
+  _box_bot
+}
+
 show_status() {
-  local W; W=$(get_cols)
-  local inner=$(( W - 2 ))
+  # Обновляем ширину терминала каждый раз
+  TERM_W=$(tput cols 2>/dev/null || echo 70)
+  [[ $TERM_W -gt 80 ]] && TERM_W=80
+  [[ $TERM_W -lt 50 ]] && TERM_W=60
+
   local ip rs_text rs_color is_text uc=0 traffic_info="" conns="—"
   ip=$(get_ip)
 
@@ -436,41 +467,17 @@ show_status() {
   fi
 
   clear; echo
-  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
-"
-  _box_center "${BOLD}${WHITE} TELEVISION  v${VERSION}${NC}" $inner
-  _box_center "${DIM}Telegram MTProxy - Rust/tokio - J-L33T${NC}" $inner
-  printf "${CYAN}╠"; _rep '═' $inner; printf "╣${NC}
-"
-  _box_kv "Engine " "telemt :latest  Status: ${rs_color}${rs_text}${NC}" $inner
-  _box_kv "IP:Port" "${WHITE}${ip}:${PROXY_PORT}${NC}" $inner
-  _box_kv "Domain " "${PROXY_DOMAIN}" $inner
-  [[ -n "${traffic_info}" ]] && _box_kv "Traffic" "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}" $inner
-  _box_kv "Secrets" "${uc} active" $inner
-  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
-"
+  _box_top
+  _box_center "${BOLD}${WHITE} TELEVISION  v${VERSION}${NC}"
+  _box_center "${DIM}Telegram MTProxy - Rust/tokio - J-L33T${NC}"
+  _box_sep
+  _box_kv "Engine " "telemt :latest  Status: ${rs_color}${rs_text}${NC}"
+  _box_kv "IP:Port" "${WHITE}${ip}:${PROXY_PORT}${NC}"
+  _box_kv "Domain " "${PROXY_DOMAIN}"
+  [[ -n "${traffic_info}" ]] && _box_kv "Traffic" "${DIM}${traffic_info}${NC}  Conns: ${WHITE}${conns}${NC}"
+  _box_kv "Secrets" "${uc} active"
+  _box_bot
   echo
-}
-
-_draw_menu_box() {
-  local W; W=$(get_cols)
-  local inner=$(( W - 2 ))
-  printf "${CYAN}╔"; _rep '═' $inner; printf "╗${NC}
-"
-  _box_center "${BOLD}$1${NC}" $inner
-  printf "${CYAN}╟"; _rep '─' $inner; printf "╢${NC}
-"
-  printf "${CYAN}║${NC}"; _rep ' ' $inner; printf "${CYAN}║${NC}
-"
-}
-
-_draw_menu_bottom() {
-  local W; W=$(get_cols)
-  local inner=$(( W - 2 ))
-  printf "${CYAN}║${NC}"; _rep ' ' $inner; printf "${CYAN}║${NC}
-"
-  printf "${CYAN}╚"; _rep '═' $inner; printf "╝${NC}
-"
 }
 
 # ──────────────────────────────────────────────────────────────
