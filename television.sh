@@ -136,18 +136,19 @@ services:
     image: ${DOCKER_IMAGE}
     container_name: telemt
     restart: unless-stopped
-    command: ["/app/telemt", "/etc/telemt/config.toml"]
+    command: ["/app/telemt", "/app/config.toml"]
     ports:
       - "${PROXY_PORT}:${PROXY_PORT}"
       - "127.0.0.1:${METRICS_PORT}:9091"
     volumes:
-      - ${CONFIG_FILE}:/etc/telemt/config.toml:ro
+      - ${CONFIG_FILE}:/app/config.toml:ro
     tmpfs:
       - /tmp:rw,mode=1777,size=16m
+      - /etc/telemt:rw,mode=1777,size=8m
     environment:
       - RUST_LOG=info
     healthcheck:
-      test: ["CMD", "/app/telemt", "healthcheck", "/etc/telemt/config.toml", "--mode", "liveness"]
+      test: ["CMD", "/app/telemt", "healthcheck", "/app/config.toml", "--mode", "liveness"]
       interval: 30s
       timeout: 5s
       retries: 3
