@@ -293,50 +293,46 @@ format_bytes() {
 }
 
 show_stats() {
-  draw_header "USER STATISTICS"
+  draw_header "TRAFFIC & STATS"
   echo
   if ! is_running; then
-    log_warn "Proxy is not running — no stats available."
-    press_enter; return
-  fi
-  local metrics; metrics=$(fetch_metrics)
-  if [[ -z "${metrics}" ]]; then
-    log_warn "Metrics endpoint not reachable (127.0.0.1:${METRICS_PORT})"
-    log_dim "Make sure METRICS_PORT=${METRICS_PORT} in settings and proxy is running."
-    press_enter; return
+    log_warn "Proxy is not running."; press_enter; return
   fi
 
-  # Общий трафик
-  local total_in total_out conns
-  total_in=$(get_metric_value "${metrics}" "telemt_bytes_received_total" "" "")
-  total_out=$(get_metric_value "${metrics}" "telemt_bytes_sent_total" "" "")
-  conns=$(get_metric_value "${metrics}" "telemt_connections_active" "" "")
+  local logs; logs=$(docker compose -f "${COMPOSE_FILE}" logs --tail=1000 --no-color 2>/dev/null || true)
 
-  printf "  %-22s %s\n" "Active connections:" "${conns:-?}"
-  printf "  %-22s %s\n" "Total received:" "$(format_bytes "${total_in:-0}")"
-  printf "  %-22s %s\n" "Total sent:" "$(format_bytes "${total_out:-0}")"
+  local total_conns unique_ips last_ip errors uptime_str=""
+  total_conns=$(echo "${logs}" | grep -c "Connection closed" 2>/dev/null || echo "0")
+  unique_ips=$(echo "${logs}" | grep -oE "peer=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | sort -u | wc -l)
+  last_ip=$(echo "${logs}" | grep "Connection closed" | tail -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1)
+  errors=$(echo "${logs}" | grep -c " ERROR\| WARN" 2>/dev/null || echo "0")
+
+  local started; started=$(docker inspect telemt --format='{{.State.StartedAt}}' 2>/dev/null || true)
+  if [[ -n "${started}" ]]; then
+    local start_epoch; start_epoch=$(date -d "${started}" +%s 2>/dev/null || echo "0")
+    local diff=$(( $(date +%s) - start_epoch ))
+    local d=$(( diff/86400 )) h=$(( (diff%86400)/3600 )) m=$(( (diff%3600)/60 ))
+    [[ $d -gt 0 ]] && uptime_str="${d}d ${h}h ${m}m" || \
+    { [[ $h -gt 0 ]] && uptime_str="${h}h ${m}m" || uptime_str="${m}m"; }
+  fi
+
+  printf "  ${DIM}%-22s${NC}  %s\n" "Uptime:"           "${uptime_str:-unknown}"
+  printf "  ${DIM}%-22s${NC}  %s\n" "Sessions (log):"   "${total_conns}"
+  printf "  ${DIM}%-22s${NC}  %s\n" "Unique IPs seen:"  "${unique_ips}"
+  [[ -n "${last_ip}" ]] && \
+  printf "  ${DIM}%-22s${NC}  %s\n" "Last client IP:"   "${last_ip}"
+  printf "  ${DIM}%-22s${NC}  %s\n" "Warnings/Errors:"  "${errors}"
   echo
 
-  # Per-user stats
   if [[ -f "${SECRETS_FILE}" ]] && [[ -s "${SECRETS_FILE}" ]]; then
-    printf "  ${BOLD}%-20s  %-6s  %-12s  %-12s  %s${NC}\n" "User" "State" "Received" "Sent" "Connections"
-    echo -e "  ${DIM}$(printf '%0.s─' {1..65})${NC}"
+    echo -e "  ${BOLD}Users:${NC}"
+    echo -e "  ${DIM}$(_rep '─' 36)${NC}"
     while IFS="|" read -r label secret enabled; do
       [[ "${label}" =~ ^# ]] || [[ -z "${label}" ]] && continue
-      local u_in u_out u_conn
-      u_in=$(get_metric_value  "${metrics}" "telemt_user_bytes_received_total" "user" "${label}")
-      u_out=$(get_metric_value "${metrics}" "telemt_user_bytes_sent_total"     "user" "${label}")
-      u_conn=$(get_metric_value "${metrics}" "telemt_user_connections_active"  "user" "${label}")
-      local state_sym
-      [[ "${enabled}" == "enabled" ]] && state_sym="${LGREEN}on${NC}" || state_sym="${LRED}off${NC}"
-      printf "  %-20s  %-6b  %-12s  %-12s  %s\n" \
-        "${label}" "${state_sym}" \
-        "$(format_bytes "${u_in:-0}")" \
-        "$(format_bytes "${u_out:-0}")" \
-        "${u_conn:-0}"
+      local sym
+      [[ "${enabled}" == "enabled" ]] && sym="${LGREEN}● active${NC}" || sym="${LRED}○ disabled${NC}"
+      printf "  %-20s  %b\n" "${label}" "${sym}"
     done < "${SECRETS_FILE}"
-  else
-    log_warn "No users configured."
   fi
   echo
   press_enter
@@ -745,7 +741,25 @@ user_menu() {
 show_logs() {
   draw_header "LOGS"
   [[ -f "${COMPOSE_FILE}" ]] || { log_warn "Not installed"; press_enter; return; }
-  docker compose -f "${COMPOSE_FILE}" logs --tail=60 --no-color 2>&1 | head -70
+  echo -e "  ${DIM}Showing important events (errors, connections, startup)${NC}\n"
+  docker compose -f "${COMPOSE_FILE}" logs --tail=200 --no-color 2>&1 | \
+    grep -E "ERROR|WARN|Listening|ME pool READY|ME startup|Downloaded proxy-secret|Connection closed|config watcher" | \
+    tail -30 | \
+    sed 's/telemt  | //' | \
+    sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T\([0-9:]\{8\}\)\.[0-9]*Z/\1/' | \
+    while IFS= read -r line; do
+      if echo "${line}" | grep -q "ERROR"; then
+        echo -e "  ${LRED}${line}${NC}"
+      elif echo "${line}" | grep -q "WARN"; then
+        echo -e "  ${YELLOW}${line}${NC}"
+      elif echo "${line}" | grep -q "Listening\|ME pool READY\|Downloaded"; then
+        echo -e "  ${LGREEN}${line}${NC}"
+      else
+        echo -e "  ${DIM}${line}${NC}"
+      fi
+    done
+  echo
+  echo -e "  ${DIM}(full logs: docker compose -f ${COMPOSE_FILE} logs -f)${NC}"
   press_enter
 }
 
