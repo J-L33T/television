@@ -840,6 +840,9 @@ main_menu() {
       do_self_install
       echo
     fi
+  elif [[ -f "${SELF_BIN}" ]] && [[ "$(realpath "$0" 2>/dev/null)" == "${SELF_BIN}" ]]; then
+    echo -e "  ${LGREEN}✓${NC}  Command ${BOLD}television${NC} is available — just type it anywhere"
+    sleep 1
   fi
   while true; do
     show_status
