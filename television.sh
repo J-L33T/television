@@ -605,7 +605,11 @@ do_install() {
 
   printf "  FakeTLS domain [%s]: " "${PROXY_DOMAIN}"; read -r i; [[ -n "${i}" ]] && PROXY_DOMAIN="${i}"
 
-  echo "  Protocol: 1) tls (FakeTLS)  2) secure  3) classic  4) all"
+  echo -e "  Protocol:"
+  echo -e "    ${BOLD}${CYAN}1)${NC} tls     ${DIM}(FakeTLS — recommended)${NC}"
+  echo -e "    ${BOLD}${CYAN}2)${NC} secure  ${DIM}(MTProto secure)${NC}"
+  echo -e "    ${BOLD}${CYAN}3)${NC} classic ${DIM}(MTProto classic)${NC}"
+  echo -e "    ${BOLD}${CYAN}4)${NC} all     ${DIM}(all protocols)${NC}"
   printf "  Choice [1]: "; read -r i
   case "${i}" in 2) PROXY_PROTOCOL="secure" ;; 3) PROXY_PROTOCOL="classic" ;; 4) PROXY_PROTOCOL="all" ;; *) PROXY_PROTOCOL="tls" ;; esac
 
@@ -763,7 +767,8 @@ do_reconfigure() {
   done
 
   printf "  FakeTLS domain [%s]: " "${PROXY_DOMAIN}"; read -r i; [[ -n "${i}" ]] && PROXY_DOMAIN="${i}"
-  echo "  Protocol: 1) tls  2) secure  3) classic  4) all  [current: ${PROXY_PROTOCOL}]"
+  echo -e "  Protocol: ${DIM}[current: ${PROXY_PROTOCOL}]${NC}"
+  echo -e "    ${BOLD}${CYAN}1)${NC} tls  ${BOLD}${CYAN}2)${NC} secure  ${BOLD}${CYAN}3)${NC} classic  ${BOLD}${CYAN}4)${NC} all"
   printf "  Choice (Enter=keep): "; read -r i
   case "${i}" in 1) PROXY_PROTOCOL="tls" ;; 2) PROXY_PROTOCOL="secure" ;; 3) PROXY_PROTOCOL="classic" ;; 4) PROXY_PROTOCOL="all" ;; esac
   printf "  Custom IP [%s] (-=clear): " "${CUSTOM_IP:-auto}"; read -r i
